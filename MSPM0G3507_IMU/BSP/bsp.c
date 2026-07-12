@@ -1,5 +1,7 @@
 #include "bsp.h"
 
+#include "bsp_i2c.h"
+#include "bsp_uart.h"
 #include "ti_msp_dl_config.h"
 
 static volatile uint32_t g_tickMs;
@@ -10,6 +12,8 @@ void BSP_Init(void)
 {
     g_tickMs = 0U;
     SYSCFG_DL_init();
+    BSP_I2C_Init();
+    BSP_UART_Init();
 }
 
 uint32_t BSP_GetTickMs(void)

@@ -3,10 +3,13 @@ name: MSPM0G3507_IMU
 type: ARM
 deviceName: null
 packDir: null
-srcDirs: []
+srcDirs:
+  - generated/syscfg
 virtualFolder:
   name: <virtual_root>
-  files: []
+  files:
+    - path: cmsis_dsp_empty.c
+    - path: startup/startup_mspm0g350x_gcc.c
   folders: []
 dependenceList: []
 outDir: build
@@ -15,9 +18,17 @@ miscInfo:
 targets:
   Debug:
     cppPreprocessAttrs:
-      defineList: []
-      incList: []
-      libList: []
+      defineList:
+        - __MSPM0G3507__
+        - __USE_SYSCONFIG__
+        - ARM_MATH_CM0
+      incList:
+        - generated/syscfg
+        - ${MSPM0_SDK_ROOT}/source
+        - ${MSPM0_SDK_ROOT}/source/third_party/CMSIS/Core/Include
+        - ${MSPM0_SDK_ROOT}/source/third_party/CMSIS/DSP/Include
+      libList:
+        - ${MSPM0_SDK_ROOT}/source
     excludeList: []
     settings:
       debugger: cortex-debug
@@ -30,12 +41,14 @@ targets:
         options:
           version: 5
           afterBuildTasks: []
-          asm-compiler:
-            ASM_FLAGS: ""
-          beforeBuildTasks: []
+          asm-compiler: {}
+          beforeBuildTasks:
+            - name: Syscfg Pre-build
+              abortAfterFailed: false
+              command: '"${ProjectRoot}\tools\generate_syscfg.cmd"'
+              disable: false
+              stopBuildAfterFailed: true
           c/cpp-compiler:
-            CXX_FLAGS: ""
-            C_FLAGS: ""
             language-c: c11
             language-cpp: c++11
             one-elf-section-per-data: true
@@ -43,19 +56,20 @@ targets:
             optimization: level-debug
             warnings: all-warnings
           global:
-            $float-abi-type: hard
-            misc-control: ""
+            $float-abi-type: softfp
+            arm-thumb-mode: thumb
             not-use-syscalls: true
             output-debug-info: enable
             use-newlib-nano: true
           linker:
             $outputTaskExcludes:
               - .bin
-            LD_FLAGS: ""
-            LIB_FLAGS: -lm
+            $toolName: auto
+            LD_FLAGS: -nostartfiles -static
+            LIB_FLAGS: -Tgenerated/syscfg/device.lds.genlibs -lm
             output-format: elf
             remove-unused-input-sections: true
-        scatterFilePath: <YOUR_LINKER_SCRIPT>.lds
+        scatterFilePath: generated/syscfg/device_linker.lds
         storageLayout:
           RAM: []
           ROM: []
@@ -71,8 +85,8 @@ targets:
         proType: 1
         speed: 8000
       OpenOCD:
-        baseAddr: "0x08000000"
+        baseAddr: "0x00000000"
         bin: ""
         interface: xds110
-        target: stm32f1x
+        target: ti_mspm0
     uploader: OpenOCD

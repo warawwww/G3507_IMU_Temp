@@ -2,12 +2,22 @@
 
 #include "ti_msp_dl_config.h"
 
+static volatile uint32_t g_tickMs;
+
+void SysTick_Handler(void);
+
 void BSP_Init(void)
 {
+    g_tickMs = 0U;
     SYSCFG_DL_init();
 }
 
-void BSP_Idle(void)
+uint32_t BSP_GetTickMs(void)
 {
-    __WFI();
+    return g_tickMs;
+}
+
+void SysTick_Handler(void)
+{
+    g_tickMs++;
 }

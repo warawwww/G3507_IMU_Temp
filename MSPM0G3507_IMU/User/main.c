@@ -8,6 +8,5 @@ int main(void)
 
     while (1) {
         APP_Run();
-        BSP_Idle();
     }
 }

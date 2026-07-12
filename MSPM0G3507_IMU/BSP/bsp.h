@@ -1,7 +1,9 @@
 #ifndef BSP_H
 #define BSP_H
 
+#include <stdint.h>
+
 void BSP_Init(void);
-void BSP_Idle(void);
+uint32_t BSP_GetTickMs(void);
 
 #endif

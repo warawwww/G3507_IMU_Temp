@@ -35,6 +35,16 @@
             "command": "${command:eide.project.clean}",
             "group": "build",
             "problemMatcher": []
+        },
+        {
+            "label": "Open SysConfig",
+            "type": "shell",
+            "command": "${workspaceFolder}\\tools\\open_syscfg.cmd",
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "never",
+                "panel": "dedicated"
+            }
         }
     ]
 }

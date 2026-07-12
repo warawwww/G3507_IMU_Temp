@@ -148,8 +148,18 @@ generated/syscfg/
 
 ```text
 MSPM0G3507_IMU/
-├── cmsis_dsp_empty.c
 ├── cmsis_dsp_empty.syscfg
+├── User/
+│   ├── main.c
+│   ├── app.c
+│   └── app.h
+├── BSP/
+│   ├── bsp.c
+│   └── bsp.h
+├── Drivers/
+│   └── README.md
+├── Algorithm/
+│   └── README.md
 ├── generated/
 │   └── syscfg/
 ├── startup/
@@ -244,15 +254,20 @@ EIDE → 构建器选项 → 用户任务
 在 EIDE 项目资源中加入：
 
 ```text
-cmsis_dsp_empty.c
+Algorithm
+User
+BSP
+Drivers
 startup/startup_mspm0g350x_gcc.c
 generated/syscfg
 ```
 
-EIDE 最终编译三个 C 文件：
+当前 EIDE 编译以下 C 文件：
 
 ```text
-cmsis_dsp_empty.c
+User/main.c
+User/app.c
+BSP/bsp.c
 generated/syscfg/ti_msp_dl_config.c
 startup/startup_mspm0g350x_gcc.c
 ```
@@ -268,6 +283,10 @@ EIDE → C/C++ 属性 → 包含目录
 添加：
 
 ```text
+Algorithm
+BSP
+Drivers
+User
 generated/syscfg
 ${MSPM0_SDK_ROOT}/source
 ${MSPM0_SDK_ROOT}/source/third_party/CMSIS/Core/Include
@@ -373,7 +392,7 @@ EIDE → 构建器选项 → 链接器
 ```text
 pre-build tasks
 Syscfg Pre-build
-编译三个 C 文件
+编译项目 C 文件
 链接 MSPM0G3507_IMU.elf
 打印内存使用量
 ```

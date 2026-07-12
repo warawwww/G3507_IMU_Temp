@@ -4,11 +4,14 @@ type: ARM
 deviceName: null
 packDir: null
 srcDirs:
+  - Algorithm
+  - BSP
+  - Drivers
+  - User
   - generated/syscfg
 virtualFolder:
   name: <virtual_root>
   files:
-    - path: cmsis_dsp_empty.c
     - path: startup/startup_mspm0g350x_gcc.c
   folders: []
 dependenceList: []
@@ -23,6 +26,10 @@ targets:
         - __USE_SYSCONFIG__
         - ARM_MATH_CM0
       incList:
+        - Algorithm
+        - BSP
+        - Drivers
+        - User
         - generated/syscfg
         - ${MSPM0_SDK_ROOT}/source
         - ${MSPM0_SDK_ROOT}/source/third_party/CMSIS/Core/Include

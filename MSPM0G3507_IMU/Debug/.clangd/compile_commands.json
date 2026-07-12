@@ -1,0 +1,12 @@
+[
+   {
+      "directory" : "C:/Users/31131/workspace_ccstheia/MSPM0G3507_IMU/Debug",
+      "command"   : "clang++ -D__MSPM0G3507__ -D__USE_SYSCONFIG__ -DARM_MATH_CM0 -I\"C:/Users/31131/workspace_ccstheia/MSPM0G3507_IMU\" -I\"C:/Users/31131/workspace_ccstheia/MSPM0G3507_IMU/Debug\" -I\"D:/diansai/ti/mspm0_sdk_2_10_00_04/source/third_party/CMSIS/Core/Include\" -I\"D:/diansai/ti/mspm0_sdk_2_10_00_04/source/third_party/CMSIS/DSP/Include\" -I\"D:/diansai/ti/mspm0_sdk_2_10_00_04/source\" -I\"D:/diansai/ti/gcc_arm_none_eabi_9_2_1/arm-none-eabi/include/newlib-nano\" -I\"D:/diansai/ti/gcc_arm_none_eabi_9_2_1/arm-none-eabi/include\" -isystem\"D:/diansai/ti/gcc_arm_none_eabi_9_2_1/arm-none-eabi/include/c++/9.2.1\" -isystem\"D:/diansai/ti/gcc_arm_none_eabi_9_2_1/arm-none-eabi/include/c++/9.2.1/arm-none-eabi\" -isystem\"D:/diansai/ti/gcc_arm_none_eabi_9_2_1/arm-none-eabi/include/c++/9.2.1/backward\" -isystem\"D:/diansai/ti/gcc_arm_none_eabi_9_2_1/lib/gcc/arm-none-eabi/9.2.1/include\" -isystem\"D:/diansai/ti/gcc_arm_none_eabi_9_2_1/lib/gcc/arm-none-eabi/9.2.1/include-fixed\" -isystem\"D:/diansai/ti/gcc_arm_none_eabi_9_2_1/arm-none-eabi/include\" -std=c99 -xc",
+      "file"      : "C:/Users/31131/workspace_ccstheia/MSPM0G3507_IMU/cmsis_dsp_empty.c"
+   },
+   {
+      "directory" : "C:/Users/31131/workspace_ccstheia/MSPM0G3507_IMU/Debug",
+      "command"   : "clang++ -D__MSPM0G3507__ -D__USE_SYSCONFIG__ -DARM_MATH_CM0 -I\"C:/Users/31131/workspace_ccstheia/MSPM0G3507_IMU\" -I\"C:/Users/31131/workspace_ccstheia/MSPM0G3507_IMU/Debug\" -I\"D:/diansai/ti/mspm0_sdk_2_10_00_04/source/third_party/CMSIS/Core/Include\" -I\"D:/diansai/ti/mspm0_sdk_2_10_00_04/source/third_party/CMSIS/DSP/Include\" -I\"D:/diansai/ti/mspm0_sdk_2_10_00_04/source\" -I\"D:/diansai/ti/gcc_arm_none_eabi_9_2_1/arm-none-eabi/include/newlib-nano\" -I\"D:/diansai/ti/gcc_arm_none_eabi_9_2_1/arm-none-eabi/include\" -isystem\"D:/diansai/ti/gcc_arm_none_eabi_9_2_1/arm-none-eabi/include/c++/9.2.1\" -isystem\"D:/diansai/ti/gcc_arm_none_eabi_9_2_1/arm-none-eabi/include/c++/9.2.1/arm-none-eabi\" -isystem\"D:/diansai/ti/gcc_arm_none_eabi_9_2_1/arm-none-eabi/include/c++/9.2.1/backward\" -isystem\"D:/diansai/ti/gcc_arm_none_eabi_9_2_1/lib/gcc/arm-none-eabi/9.2.1/include\" -isystem\"D:/diansai/ti/gcc_arm_none_eabi_9_2_1/lib/gcc/arm-none-eabi/9.2.1/include-fixed\" -isystem\"D:/diansai/ti/gcc_arm_none_eabi_9_2_1/arm-none-eabi/include\" -std=c99 -xc",
+      "file"      : "C:/Users/31131/workspace_ccstheia/MSPM0G3507_IMU/Debug/ti_msp_dl_config.c"
+   }
+]

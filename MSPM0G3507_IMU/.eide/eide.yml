@@ -25,7 +25,7 @@ targets:
     toolchainConfigMap:
       GCC:
         archExtensions: ""
-        cpuType: Cortex-M3
+        cpuType: Cortex-M0+
         floatingPointHardware: none
         options:
           version: 5
@@ -70,4 +70,9 @@ targets:
         otherCmds: ""
         proType: 1
         speed: 8000
-    uploader: JLink
+      OpenOCD:
+        baseAddr: "0x08000000"
+        bin: ""
+        interface: xds110
+        target: stm32f1x
+    uploader: OpenOCD

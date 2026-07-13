@@ -64,12 +64,20 @@ bool PID_Init(PID_Controller *controller, const PID_Config *config)
 
 bool PID_Reset(PID_Controller *controller, float initialOutput)
 {
+    return PID_Prime(controller, 0.0f, initialOutput);
+}
+
+bool PID_Prime(PID_Controller *controller, float currentError,
+    float initialOutput)
+{
     if ((controller == NULL) || !controller->initialized ||
-        !PID_IsFinite(initialOutput)) {
+        !PID_IsFinite(currentError) || !PID_IsFinite(initialOutput)) {
         return false;
     }
 
     arm_pid_reset_f32(&controller->cmsis);
+    controller->cmsis.state[0] = currentError;
+    controller->cmsis.state[1] = currentError;
     controller->cmsis.state[2] = PID_Clamp(initialOutput,
         controller->outputMin, controller->outputMax);
     return true;

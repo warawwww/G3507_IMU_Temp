@@ -35,6 +35,13 @@ bool PID_Init(PID_Controller *controller, const PID_Config *config);
 bool PID_Reset(PID_Controller *controller, float initialOutput);
 
 /**
+ * Set the current error history and output before starting control.
+ * This avoids derivative kick on the first PID step.
+ */
+bool PID_Prime(PID_Controller *controller, float currentError,
+    float initialOutput);
+
+/**
  * Run one PID step using error = setpoint - measurement.
  * Call this function at the fixed period configured in samplePeriodS.
  */

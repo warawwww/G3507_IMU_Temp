@@ -369,7 +369,7 @@ EIDE → 构建器选项 → 链接器
 链接库选项：
 
 ```text
--Tgenerated/syscfg/device.lds.genlibs -lm
+-l:third_party/CMSIS/DSP/lib/gcc/m0p/arm_cortexM0l_math.a -Tgenerated/syscfg/device.lds.genlibs -lm
 ```
 
 作用：
@@ -377,11 +377,12 @@ EIDE → 构建器选项 → 链接器
 ```text
 -nostartfiles    使用项目内的 TI startup
 -static          静态链接
+-l:...math.a     在 C 标准库之前显式引入 CMSIS-DSP，满足 PID 初始化的 memset 依赖
 -T...genlibs     读取 SysConfig 生成的 DriverLib/CMSIS-DSP 库清单
 -lm              链接标准数学库
 ```
 
-`device.lds.genlibs` 放在链接库选项中，使静态库在目标文件之后参与链接。相对路径也能直接传给 Windows `ld.exe`。
+`device.lds.genlibs` 放在链接库选项中，使静态库在目标文件之后参与链接。CMSIS-DSP 库同时显式列出，用于规避 GCC 处理 `-T...genlibs` 时的静态库扫描顺序问题。
 
 ### 2.11 构建
 

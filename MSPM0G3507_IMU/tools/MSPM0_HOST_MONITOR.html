@@ -314,7 +314,7 @@
     function setHeaterState(enabled, dutyPercent) {
       heaterStateElement.textContent = enabled ? '加热中' : '已关闭';
       heaterStateElement.className = `heater-state ${enabled ? 'on' : 'off'}`;
-      heaterDutyElement.textContent = `${dutyPercent} %`;
+      heaterDutyElement.textContent = `${dutyPercent.toFixed(1)} %`;
       heaterUpdateTime.textContent = new Date().toLocaleTimeString();
     }
 
@@ -329,11 +329,11 @@
 
       if (fields[0] === 'HEATER' && fields[1] === 'STATE' &&
           fields.length === 4 && /^[01]$/.test(fields[2]) &&
-          /^\d+$/.test(fields[3])) {
+          /^\d{1,3}(?:\.\d)?$/.test(fields[3])) {
         const enabled = fields[2] === '1';
         const dutyPercent = Number(fields[3]);
-        if (Number.isInteger(dutyPercent) && dutyPercent <= 100 &&
-            ((enabled && dutyPercent > 0) || (!enabled && dutyPercent === 0))) {
+        if (Number.isFinite(dutyPercent) && dutyPercent <= 100 &&
+            (enabled || dutyPercent === 0)) {
           setHeaterState(enabled, dutyPercent);
         }
         return;

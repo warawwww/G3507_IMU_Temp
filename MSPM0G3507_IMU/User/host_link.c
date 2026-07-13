@@ -78,7 +78,7 @@ bool HostLink_SendTMP117Error(TMP117_Status status)
         prefix, sizeof(prefix) - 1U, (int32_t) status);
 }
 
-bool HostLink_SendHeaterState(bool enabled, uint8_t dutyPercent)
+bool HostLink_SendHeaterState(bool enabled, uint16_t dutyPermille)
 {
     static const char prefix[] = "HEATER,STATE,";
     char frame[HOST_LINK_FRAME_CAPACITY];
@@ -88,9 +88,53 @@ bool HostLink_SendHeaterState(bool enabled, uint8_t dutyPercent)
     length = sizeof(prefix) - 1U;
     frame[length++] = enabled ? '1' : '0';
     frame[length++] = ',';
-    length = HostLink_AppendInt32(frame, length, (int32_t) dutyPercent);
+    length = HostLink_AppendInt32(
+        frame, length, (int32_t) (dutyPermille / 10U));
+    frame[length++] = '.';
+    frame[length++] = (char) ('0' + (dutyPermille % 10U));
     frame[length++] = '\r';
     frame[length++] = '\n';
+
+    return BSP_UART_Write(
+        BSP_UART_PORT_TYPEC, (const uint8_t *) frame, length);
+}
+
+bool HostLink_SendHeaterControlSample(
+    const HostLink_HeaterControlSample *sample)
+{
+    static const char prefix[] = "HEATER,CTRL,";
+    int32_t fields[10];
+    char frame[HOST_LINK_FRAME_CAPACITY];
+    size_t length;
+    size_t index;
+
+    if (sample == NULL) {
+        return false;
+    }
+
+    fields[0] = (int32_t) sample->timeMs;
+    fields[1] = (int32_t) sample->phase;
+    fields[2] = sample->temperatureMilliC;
+    fields[3] = sample->targetMilliC;
+    fields[4] = (int32_t) sample->dutyPermille;
+    fields[5] = (int32_t) sample->feedforwardPermille;
+    fields[6] = sample->pidCorrectionPermille;
+    fields[7] = sample->kpMilli;
+    fields[8] = sample->kiMilli;
+    fields[9] = sample->kdMilli;
+
+    memcpy(frame, prefix, sizeof(prefix) - 1U);
+    length = sizeof(prefix) - 1U;
+    for (index = 0U; index < (sizeof(fields) / sizeof(fields[0])); index++) {
+        length = HostLink_AppendInt32(frame, length, fields[index]);
+        frame[length++] = (index + 1U ==
+            (sizeof(fields) / sizeof(fields[0]))) ? '\r' : ',';
+    }
+    frame[length++] = '\n';
+
+    if (length > sizeof(frame)) {
+        return false;
+    }
 
     return BSP_UART_Write(
         BSP_UART_PORT_TYPEC, (const uint8_t *) frame, length);

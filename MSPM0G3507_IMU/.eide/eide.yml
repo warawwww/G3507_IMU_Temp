@@ -73,7 +73,7 @@ targets:
               - .bin
             $toolName: auto
             LD_FLAGS: -nostartfiles -static
-            LIB_FLAGS: -Tgenerated/syscfg/device.lds.genlibs -lm
+            LIB_FLAGS: -l:third_party/CMSIS/DSP/lib/gcc/m0p/arm_cortexM0l_math.a -Tgenerated/syscfg/device.lds.genlibs -lm
             output-format: elf
             remove-unused-input-sections: true
         scatterFilePath: generated/syscfg/device_linker.lds

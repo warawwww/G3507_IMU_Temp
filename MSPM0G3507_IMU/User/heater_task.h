@@ -16,4 +16,7 @@ bool Heater_Task_IsEnabled(void);
 /** 返回当前加热 PWM 占空比。 */
 uint8_t Heater_Task_GetDutyPercent(void);
 
+/** 返回当前加热 PWM 占空比，单位为 0.1%。 */
+uint16_t Heater_Task_GetDutyPermille(void);
+
 #endif

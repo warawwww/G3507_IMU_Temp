@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 from pathlib import Path
 
 import numpy as np
@@ -45,7 +46,15 @@ def rounded_rows(data: pd.DataFrame, fields: list[str]) -> list[dict]:
 
 
 def build_artifact(csv_path: Path) -> dict:
-    data = pd.read_csv(csv_path)
+    raw_data = pd.read_csv(csv_path)
+    source_sql = """SELECT
+    received_at, device_time_ms, phase, temperature_c, target_c, error_c,
+    pwm_percent, feedforward_percent, pid_correction_percent, kp, ki, kd
+FROM heater_pid_samples
+ORDER BY device_time_ms"""
+    with sqlite3.connect(":memory:") as connection:
+        raw_data.to_sql("heater_pid_samples", connection, index=False)
+        data = pd.read_sql_query(source_sql, connection)
     missing = REQUIRED_COLUMNS.difference(data.columns)
     if missing:
         raise ValueError(f"missing required columns: {sorted(missing)}")
@@ -142,6 +151,20 @@ def build_artifact(csv_path: Path) -> dict:
         "id": source_id,
         "label": csv_path.name,
         "path": csv_path.name,
+        "query": {
+            "engine": "sqlite",
+            "sql": source_sql,
+            "description": "Loads all synchronized heater-control samples from the CSV staging table in device-time order.",
+            "executed_at": generated_at,
+            "language": "sql",
+            "tables_used": ["heater_pid_samples"],
+            "filters": ["No rows excluded; ORDER BY device_time_ms"],
+            "metric_definitions": [
+                "Settling time: earliest time after which every remaining sample stays inside the stated absolute-error band",
+                "Steady-state MAE: mean absolute target error over the final 60 seconds",
+                "Peak-to-peak: maximum minus minimum temperature over the final 60 seconds",
+            ],
+        },
     }
 
     title = "Heater PID response diagnosis"

@@ -6302,7 +6302,25 @@
     {
       "id": "heater_pid_csv",
       "label": "heater_pid_2026-07-13T15-39-22-876Z.csv",
-      "path": "heater_pid_2026-07-13T15-39-22-876Z.csv"
+      "path": "heater_pid_2026-07-13T15-39-22-876Z.csv",
+      "query": {
+        "engine": "sqlite",
+        "sql": "SELECT\n    received_at, device_time_ms, phase, temperature_c, target_c, error_c,\n    pwm_percent, feedforward_percent, pid_correction_percent, kp, ki, kd\nFROM heater_pid_samples\nORDER BY device_time_ms",
+        "description": "Loads all synchronized heater-control samples from the CSV staging table in device-time order.",
+        "executed_at": "2026-07-13T15:39:19.022000Z",
+        "language": "sql",
+        "tables_used": [
+          "heater_pid_samples"
+        ],
+        "filters": [
+          "No rows excluded; ORDER BY device_time_ms"
+        ],
+        "metric_definitions": [
+          "Settling time: earliest time after which every remaining sample stays inside the stated absolute-error band",
+          "Steady-state MAE: mean absolute target error over the final 60 seconds",
+          "Peak-to-peak: maximum minus minimum temperature over the final 60 seconds"
+        ]
+      }
     }
   ]
 }

@@ -90,7 +90,8 @@ TMP117_Status TMP117_Init(void)
         return TMP117_STATUS_DEVICE_ID_MISMATCH;
     }
 
-    return TMP117_STATUS_OK;
+    return TMP117_Configure(TMP117_MODE_CONTINUOUS,
+        TMP117_CONVERSION_CYCLE_125_MS, TMP117_AVERAGING_8);
 }
 
 TMP117_Status TMP117_ReadRaw(int16_t *rawTemperature)

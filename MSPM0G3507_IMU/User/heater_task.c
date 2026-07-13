@@ -37,8 +37,42 @@ static bool g_pidReady;
 static bool g_pidActive;
 static bool g_heaterEnabled;
 static bool g_reportPending;
+static bool g_controlSamplePending;
 static uint32_t g_lastControlMs;
 static uint32_t g_lastReportMs;
+static HostLink_HeaterControlSample g_controlSample;
+
+static int32_t Heater_Task_RoundScaled(float value, float scale)
+{
+    float scaledValue = value * scale;
+
+    return (int32_t) (scaledValue + ((scaledValue >= 0.0f) ? 0.5f : -0.5f));
+}
+
+static void Heater_Task_QueueControlSample(uint32_t nowMs,
+    HostLink_HeaterPhase phase, float temperatureC,
+    float pidCorrectionPercent, uint16_t dutyPermille)
+{
+    g_controlSample.timeMs = nowMs;
+    g_controlSample.phase = phase;
+    g_controlSample.temperatureMilliC =
+        Heater_Task_RoundScaled(temperatureC, 1000.0f);
+    g_controlSample.targetMilliC =
+        Heater_Task_RoundScaled(HEATER_TARGET_TEMPERATURE_C, 1000.0f);
+    g_controlSample.dutyPermille = dutyPermille;
+    g_controlSample.feedforwardPermille =
+        HEATER_FEEDFORWARD_DUTY_PERMILLE;
+    g_controlSample.pidCorrectionPermille =
+        Heater_Task_RoundScaled(pidCorrectionPercent,
+            HEATER_PERMILLE_PER_PERCENT);
+    g_controlSample.kpMilli =
+        Heater_Task_RoundScaled(HEATER_PID_KP, 1000.0f);
+    g_controlSample.kiMilli =
+        Heater_Task_RoundScaled(HEATER_PID_KI, 1000.0f);
+    g_controlSample.kdMilli =
+        Heater_Task_RoundScaled(HEATER_PID_KD, 1000.0f);
+    g_controlSamplePending = true;
+}
 
 static void Heater_Task_Disable(void)
 {
@@ -77,6 +111,7 @@ static void Heater_Task_Enable(uint32_t nowMs)
     g_pidActive = false;
     g_heaterEnabled = true;
     g_reportPending = true;
+    g_controlSamplePending = false;
 
     /* Force the first control calculation to run immediately. */
     g_lastControlMs = nowMs - HEATER_CONTROL_PERIOD_MS;
@@ -109,7 +144,11 @@ static void Heater_Task_UpdateControl(uint32_t nowMs)
             if (!Heater_SetDutyPermille(
                     HEATER_RAPID_HEAT_DUTY_PERMILLE)) {
                 Heater_Task_Disable();
+                return;
             }
+            Heater_Task_QueueControlSample(nowMs,
+                HOST_LINK_HEATER_PHASE_RAPID, temperatureC, 0.0f,
+                HEATER_RAPID_HEAT_DUTY_PERMILLE);
             return;
         }
 
@@ -143,7 +182,10 @@ static void Heater_Task_UpdateControl(uint32_t nowMs)
     }
     if (!Heater_SetDutyPermille(dutyPermille)) {
         Heater_Task_Disable();
+        return;
     }
+    Heater_Task_QueueControlSample(nowMs, HOST_LINK_HEATER_PHASE_PID,
+        temperatureC, pidCorrection, dutyPermille);
 }
 
 void Heater_Task_Init(void)
@@ -163,6 +205,7 @@ void Heater_Task_Init(void)
     g_pidActive = false;
     g_heaterEnabled = false;
     g_reportPending = true;
+    g_controlSamplePending = false;
     g_lastControlMs = BSP_GetTickMs();
     g_lastReportMs = g_lastControlMs;
 }
@@ -180,6 +223,15 @@ void Heater_Task_Run(void)
     }
 
     Heater_Task_UpdateControl(nowMs);
+
+    /* TMP117 reports first and may briefly own the DMA TX buffer. Retry the
+     * synchronized control sample on subsequent main-loop iterations. */
+    if (g_controlSamplePending) {
+        if (HostLink_SendHeaterControlSample(&g_controlSample)) {
+            g_controlSamplePending = false;
+        }
+        return;
+    }
 
     if (!g_reportPending &&
         ((uint32_t) (nowMs - g_lastReportMs) < HEATER_REPORT_PERIOD_MS)) {

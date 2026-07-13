@@ -53,7 +53,7 @@
 
     .subtitle { margin: 0; color: var(--muted); }
 
-    .controls { display: flex; gap: 10px; }
+    .controls { display: flex; flex-wrap: wrap; gap: 10px; }
 
     button {
       border: 1px solid var(--panel-border);
@@ -213,6 +213,8 @@
       <div class="controls">
         <button id="connectButton" class="primary">连接串口</button>
         <button id="disconnectButton" disabled>断开</button>
+        <button id="clearDataButton">清空记录</button>
+        <button id="saveCsvButton" disabled>保存 CSV</button>
       </div>
     </header>
 
@@ -236,6 +238,7 @@
         </div>
         <div class="meta">
           <div>当前占空比：<span id="heaterDuty">-- %</span></div>
+          <div>控制采样：<span id="sampleCount">0</span></div>
           <div>控制方式：<span>按键长按 ≥ 500 ms 切换</span></div>
           <div>更新时间：<span id="heaterUpdateTime">--</span></div>
         </div>
@@ -243,8 +246,8 @@
 
       <article class="card chart-card">
         <div class="chart-title">
-          <strong>TMP117 实时温度曲线</strong>
-          <span>最近 30 秒</span>
+          <strong>温度 / PWM 同步响应曲线</strong>
+          <span>温度（绿） · 目标（虚线） · PWM（橙） · 最近 30 秒</span>
         </div>
         <canvas id="chart"></canvas>
       </article>
@@ -267,6 +270,7 @@
   <script>
     const BAUD_RATE = 115200;
     const HISTORY_LIMIT = 240;
+    const CONTROL_RECORD_LIMIT = 250000;
     const LOG_LIMIT = 100;
     const TMP117_ERRORS = {
       1: '参数错误',
@@ -279,6 +283,8 @@
 
     const connectButton = document.querySelector('#connectButton');
     const disconnectButton = document.querySelector('#disconnectButton');
+    const clearDataButton = document.querySelector('#clearDataButton');
+    const saveCsvButton = document.querySelector('#saveCsvButton');
     const temperatureElement = document.querySelector('#temperature');
     const statusText = document.querySelector('#statusText');
     const statusDot = document.querySelector('#statusDot');
@@ -287,6 +293,7 @@
     const heaterStateElement = document.querySelector('#heaterState');
     const heaterDutyElement = document.querySelector('#heaterDuty');
     const heaterUpdateTime = document.querySelector('#heaterUpdateTime');
+    const sampleCountElement = document.querySelector('#sampleCount');
     const logElement = document.querySelector('#log');
     const canvas = document.querySelector('#chart');
 
@@ -297,6 +304,7 @@
     let receiveBuffer = '';
     let frameCount = 0;
     const history = [];
+    const controlRecords = [];
     const logLines = [];
 
     function setStatus(text, state = '') {
@@ -326,6 +334,54 @@
       frameCount += 1;
       frameCountElement.textContent = String(frameCount);
       const fields = line.split(',');
+
+      if (fields[0] === 'HEATER' && fields[1] === 'CTRL' &&
+          fields.length === 12 &&
+          fields.slice(2).every(field => /^-?\d+$/.test(field))) {
+        const values = fields.slice(2).map(Number);
+        const [deviceTimeMs, phaseCode, temperatureMilliC,
+          targetMilliC, dutyPermille, feedforwardPermille,
+          pidCorrectionPermille, kpMilli, kiMilli, kdMilli] = values;
+        const valid = values.every(Number.isSafeInteger) &&
+          (phaseCode === 1 || phaseCode === 2) &&
+          temperatureMilliC >= -256000 && temperatureMilliC <= 256000 &&
+          targetMilliC >= -256000 && targetMilliC <= 256000 &&
+          dutyPermille >= 0 && dutyPermille <= 1000 &&
+          feedforwardPermille >= 0 && feedforwardPermille <= 1000;
+
+        if (valid) {
+          const now = Date.now();
+          const temperature = temperatureMilliC / 1000;
+          const target = targetMilliC / 1000;
+          const duty = dutyPermille / 10;
+          controlRecords.push({
+            receivedAt: new Date(now).toISOString(),
+            time: now,
+            deviceTimeMs,
+            phase: phaseCode === 1 ? 'rapid' : 'pid',
+            temperature,
+            target,
+            error: target - temperature,
+            duty,
+            feedforward: feedforwardPermille / 10,
+            pidCorrection: pidCorrectionPermille / 10,
+            kp: kpMilli / 1000,
+            ki: kiMilli / 1000,
+            kd: kdMilli / 1000
+          });
+          if (controlRecords.length > CONTROL_RECORD_LIMIT) {
+            controlRecords.splice(0, 10000);
+          }
+          sampleCountElement.textContent = String(controlRecords.length);
+          saveCsvButton.disabled = false;
+          temperatureElement.textContent = temperature.toFixed(3);
+          updateTime.textContent = new Date(now).toLocaleTimeString();
+          setStatus('控制数据接收正常', 'online');
+          setHeaterState(true, duty);
+          drawChart();
+        }
+        return;
+      }
 
       if (fields[0] === 'HEATER' && fields[1] === 'STATE' &&
           fields.length === 4 && /^[01]$/.test(fields[2]) &&
@@ -388,7 +444,7 @@
       const w = rect.width;
       const h = rect.height;
       const left = 46;
-      const right = 12;
+      const right = 42;
       const top = 10;
       const bottom = 24;
       const plotWidth = Math.max(1, w - left - right);
@@ -400,11 +456,20 @@
       context.font = '11px Segoe UI, sans-serif';
       context.lineWidth = 1;
 
+      const useControlData = controlRecords.length > 0;
+      const source = useControlData ? controlRecords : history;
+      const endTime = source.length ? source[source.length - 1].time : Date.now();
+      const startTime = endTime - 30000;
+      const visible = source.filter(point => point.time >= startTime);
+      const temperatures = useControlData
+        ? visible.flatMap(point => [point.temperature, point.target])
+        : visible.map(point => point.value);
+
       let min = 20;
       let max = 30;
-      if (history.length) {
-        min = Math.min(...history.map(point => point.value));
-        max = Math.max(...history.map(point => point.value));
+      if (temperatures.length) {
+        min = Math.min(...temperatures);
+        max = Math.max(...temperatures);
         const padding = Math.max(0.25, (max - min) * 0.2);
         min -= padding;
         max += padding;
@@ -418,25 +483,82 @@
         context.stroke();
         const value = max - ((max - min) * i / 4);
         context.fillText(value.toFixed(2), 2, y + 4);
+        context.fillText(`${100 - i * 25}%`, left + plotWidth + 7, y + 4);
       }
 
       context.fillText('-30 s', left, h - 5);
       context.fillText('现在', left + plotWidth - 22, h - 5);
-      if (history.length < 2) return;
+      if (visible.length < 2) return;
 
-      const endTime = history[history.length - 1].time;
-      const startTime = endTime - 30000;
-      context.beginPath();
-      history.forEach((point, index) => {
-        const x = left + Math.max(0, (point.time - startTime) / 30000) * plotWidth;
-        const y = top + (max - point.value) / (max - min) * plotHeight;
-        if (index === 0) context.moveTo(x, y);
-        else context.lineTo(x, y);
-      });
-      context.strokeStyle = '#55d6be';
-      context.lineWidth = 2;
-      context.lineJoin = 'round';
-      context.stroke();
+      function drawLine(valueOf, color, yOf, dashed = false) {
+        context.beginPath();
+        visible.forEach((point, index) => {
+          const x = left + (point.time - startTime) / 30000 * plotWidth;
+          const y = yOf(valueOf(point));
+          if (index === 0) context.moveTo(x, y);
+          else context.lineTo(x, y);
+        });
+        context.strokeStyle = color;
+        context.lineWidth = 2;
+        context.lineJoin = 'round';
+        context.setLineDash(dashed ? [6, 5] : []);
+        context.stroke();
+        context.setLineDash([]);
+      }
+
+      const temperatureY = value =>
+        top + (max - value) / (max - min) * plotHeight;
+      if (useControlData) {
+        drawLine(point => point.target, '#8fa3bd', temperatureY, true);
+        drawLine(point => point.temperature, '#55d6be', temperatureY);
+        drawLine(point => point.duty, '#ffb85c', value =>
+          top + (100 - value) / 100 * plotHeight);
+      } else {
+        drawLine(point => point.value, '#55d6be', temperatureY);
+      }
+    }
+
+    function clearControlData() {
+      history.length = 0;
+      controlRecords.length = 0;
+      sampleCountElement.textContent = '0';
+      saveCsvButton.disabled = true;
+      drawChart();
+      appendLog('温控记录已清空');
+    }
+
+    function saveControlDataCsv() {
+      if (!controlRecords.length) return;
+
+      const header = [
+        'received_at', 'device_time_ms', 'phase', 'temperature_c',
+        'target_c', 'error_c', 'pwm_percent', 'feedforward_percent',
+        'pid_correction_percent', 'kp', 'ki', 'kd'
+      ];
+      const rows = controlRecords.map(record => [
+        record.receivedAt,
+        record.deviceTimeMs,
+        record.phase,
+        record.temperature.toFixed(3),
+        record.target.toFixed(3),
+        record.error.toFixed(3),
+        record.duty.toFixed(1),
+        record.feedforward.toFixed(1),
+        record.pidCorrection.toFixed(1),
+        record.kp.toFixed(3),
+        record.ki.toFixed(3),
+        record.kd.toFixed(3)
+      ].join(','));
+      const csv = `\uFEFF${header.join(',')}\r\n${rows.join('\r\n')}\r\n`;
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      link.href = url;
+      link.download = `heater_pid_${stamp}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+      appendLog(`已保存 ${controlRecords.length} 条温控采样`);
     }
 
     async function readSerial() {
@@ -527,6 +649,9 @@
         if (event.target === port) void disconnectSerial();
       });
     }
+
+    clearDataButton.addEventListener('click', clearControlData);
+    saveCsvButton.addEventListener('click', saveControlDataCsv);
 
     window.addEventListener('resize', drawChart);
     drawChart();

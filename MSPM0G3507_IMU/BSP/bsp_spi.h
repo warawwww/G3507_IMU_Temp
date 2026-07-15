@@ -16,9 +16,10 @@ typedef enum {
 void BSP_SPI_Init(void);
 
 /*
- * Full-duplex transfer on the gyro SPI bus. The gyro CS pin remains low for
- * the complete transaction. Pass NULL for txData to transmit zeroes, or NULL
- * for rxData to discard received bytes. Do not call from an ISR.
+ * Full-duplex DMA transfer on the gyro SPI bus. BSP_Init() raises the gyro
+ * SPI clock to the board-level target. The gyro CS pin remains low for the
+ * complete transaction. Pass NULL for txData to transmit zeroes, or NULL for
+ * rxData to discard received bytes. Do not call from an ISR.
  */
 BSP_SPI_Status BSP_SPI_GyroTransfer(
     const uint8_t *txData, uint8_t *rxData, size_t length);

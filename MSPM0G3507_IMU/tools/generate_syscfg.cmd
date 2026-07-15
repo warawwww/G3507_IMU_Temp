@@ -19,4 +19,8 @@ call "%SYSCONFIG_ROOT%\sysconfig_cli.bat" ^
   --output "%PROJECT_ROOT%\generated\syscfg" ^
   --compiler gcc
 
+if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
+
+powershell -NoProfile -ExecutionPolicy Bypass -File "%PROJECT_ROOT%\tools\reserve_imu_flash.ps1" "%PROJECT_ROOT%\generated\syscfg\device_linker.lds"
+
 exit /b %ERRORLEVEL%

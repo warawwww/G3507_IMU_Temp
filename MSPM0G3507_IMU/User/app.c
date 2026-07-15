@@ -8,39 +8,27 @@
 #include "bsp.h"
 #include "heater_task.h"
 #include "host_link.h"
+#include "imu_task.h"
 #include "tmp_task.h"
 
-#define APP_HEATING_LED_PERIOD_MS (200U)
-#define APP_STABLE_LED_PERIOD_MS  (1000U)
+#define APP_HEATING_LED_PERIOD_MS  (200U)
+#define APP_STABLE_LED_PERIOD_MS   (1000U)
+#define APP_STATE_REPORT_PERIOD_MS (500U)
+#define APP_STATE_REPORT_INVALID   (0xFFU)
 
-/*
- * 应用层业务状态机。
- *
- * heater_task 只负责温度闭环和必要保护；按键语义、陀螺仪业务流程、
- * 标定流程等上层调度都集中放在这里。
- */
 typedef enum {
-    /* 上电后的默认状态：等待 TMP 温度有效后开启加热，并持续升温。 */
     APP_STATE_POWER_ON_HEATING = 0,
-
-    /* 加热闭环进入保持阶段，温度已经稳定，可进入后续陀螺仪业务。 */
     APP_STATE_HEATER_STABLE,
-
-    /* 短按按键进入：后续在这里执行陀螺仪零飘采集和补偿。 */
     APP_STATE_GYRO_ZERO_DRIFT,
-
-    /* 零飘处理完成后的正常工作态：后续在这里稳定读取并传输陀螺仪数据。 */
     APP_STATE_GYRO_STABLE_TX,
-
-    /* 长按按键进入：后续在这里执行 360 度标定流程。 */
     APP_STATE_360_CALIBRATION,
 } App_State;
 
 static App_State g_appState;
-
-/* 上电默认需要加热；若第一帧 TMP 还没读到，则保持 pending 后续重试。 */
 static bool g_heaterStartPending;
 static uint32_t g_lastRedLedToggleMs;
+static uint32_t g_lastAppStateReportMs;
+static uint8_t g_lastReportedAppState;
 
 static void APP_UpdateHeaterStartup(void)
 {
@@ -54,18 +42,43 @@ static void APP_UpdateHeaterStartup(void)
     }
 }
 
-static void APP_UpdateState(void)
+static void APP_HandleKeyEvents(void)
 {
-    /* 按键只在 app 层消费，避免底层任务私自改变业务状态。 */
-    if (KEY_WasLongPressed()) {
-        g_appState = APP_STATE_360_CALIBRATION;
-    } else if (KEY_WasShortPressed()) {
-        g_appState = APP_STATE_GYRO_ZERO_DRIFT;
+    bool rotationRequested = KEY_WasLongPressed() ||
+                             HostLink_Take360CalibrationRequest();
+    bool zeroRequested = KEY_WasShortPressed() ||
+                         HostLink_TakeZeroCalibrationRequest();
+
+    if (rotationRequested) {
+        if (IMU_Task_Start360Calibration(1U, true)) {
+            g_appState = APP_STATE_360_CALIBRATION;
+        }
+    } else if (zeroRequested) {
+        if (IMU_Task_StartZeroCalibration(0U)) {
+            g_appState = APP_STATE_GYRO_ZERO_DRIFT;
+        }
+    }
+}
+
+static void APP_UpdateCalibrationState(void)
+{
+    if ((g_appState != APP_STATE_GYRO_ZERO_DRIFT) &&
+        (g_appState != APP_STATE_360_CALIBRATION)) {
+        return;
     }
 
-    APP_UpdateHeaterStartup();
+    if (IMU_Task_IsCalibrationBusy()) {
+        return;
+    }
 
-    /* 加热稳定与否由 heater_task 判断，app 只根据结果切换业务态。 */
+    g_appState =
+        (IMU_Task_GetCalibrationResult() == IMU_TASK_CAL_RESULT_OK)
+            ? APP_STATE_GYRO_STABLE_TX
+            : APP_STATE_HEATER_STABLE;
+}
+
+static void APP_UpdateHeaterState(void)
+{
     if ((g_appState == APP_STATE_POWER_ON_HEATING) &&
         Heater_Task_IsStable()) {
         g_appState = APP_STATE_HEATER_STABLE;
@@ -75,9 +88,16 @@ static void APP_UpdateState(void)
     }
 }
 
+static void APP_UpdateState(void)
+{
+    APP_HandleKeyEvents();
+    APP_UpdateHeaterStartup();
+    APP_UpdateHeaterState();
+    APP_UpdateCalibrationState();
+}
+
 static uint32_t APP_GetRedLedPeriodMs(void)
 {
-    /* 红灯直接指示温控状态：加热阶段快闪，稳定阶段慢闪。 */
     return Heater_Task_IsStable() ? APP_STABLE_LED_PERIOD_MS :
         APP_HEATING_LED_PERIOD_MS;
 }
@@ -92,6 +112,26 @@ static void APP_UpdateStatusLed(uint32_t nowMs)
     }
 }
 
+static void APP_ReportStateIfDue(uint32_t nowMs)
+{
+    uint8_t appState = (uint8_t) g_appState;
+
+    if (!HostLink_IsReportingEnabled()) {
+        return;
+    }
+
+    if ((g_lastReportedAppState == appState) &&
+        ((uint32_t) (nowMs - g_lastAppStateReportMs) <
+            APP_STATE_REPORT_PERIOD_MS)) {
+        return;
+    }
+
+    if (HostLink_SendAppState(appState)) {
+        g_lastReportedAppState = appState;
+        g_lastAppStateReportMs = nowMs;
+    }
+}
+
 void APP_Init(void)
 {
     uint32_t nowMs;
@@ -100,12 +140,15 @@ void APP_Init(void)
     LED_On(LED_ID_RED);
     nowMs = BSP_GetTickMs();
     g_lastRedLedToggleMs = nowMs;
+    g_lastAppStateReportMs = nowMs;
+    g_lastReportedAppState = APP_STATE_REPORT_INVALID;
     g_appState = APP_STATE_POWER_ON_HEATING;
     g_heaterStartPending = true;
 
     KEY_Init();
     HostLink_Init();
     TMP_Task_Init();
+    IMU_Task_Init();
     Heater_Task_Init();
 }
 
@@ -116,9 +159,11 @@ void APP_Run(void)
     KEY_Update();
     HostLink_Run();
     TMP_Task_Run();
+    IMU_Task_Run();
     APP_UpdateState();
     Heater_Task_Run();
 
     nowMs = BSP_GetTickMs();
+    APP_ReportStateIfDue(nowMs);
     APP_UpdateStatusLed(nowMs);
 }

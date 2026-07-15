@@ -13,16 +13,25 @@
  * Current TMP117 frames:
  *   TMP117,T,<temperature in milli-degrees Celsius>
  *   TMP117,ERR,<TMP117_Status value>
- * Current heater frame:
+ * Current heater frames:
  *   HEATER,STATE,<0 or 1>,<duty percent with one decimal place>
  *   HEATER,CTRL,<time ms>,<phase>,<temperature mC>,<target mC>,
  *       <duty permille>,<feedforward permille>,<PID correction permille>,
  *       <Kp x1000>,<Ki x1000>,<Kd x1000>
+ * Current app frames:
+ *   APP,STATE,<App_State value>
+ * Current IMU frames:
+ *   IMU,S,<time ms>,<state>,<raw24>,<rate mdps>,<angle mdeg>,
+ *       <bias mdps>,<scale ppm>,<sample count>
+ *   IMU,CAL,<state>,<result>,<angle mdeg>,<scale ppm>
+ *   IMU,ERR,<XV7021 status>
  *
  * Host commands on Type-C UART:
  *   START / HELLO / ON  enable continuous reporting
  *   STOP / OFF          disable continuous reporting
  *   PING                keep reporting alive before timeout
+ *   IMU_ZERO / ZERO     request the same zero-drift calibration as short key
+ *   IMU_CAL360 / CAL360 request the same 360 degree calibration as long key
  */
 typedef enum {
     HOST_LINK_HEATER_PHASE_RAPID = 1,
@@ -42,14 +51,32 @@ typedef struct {
     int32_t kdMilli;
 } HostLink_HeaterControlSample;
 
+typedef struct {
+    uint32_t timeMs;
+    uint8_t state;
+    int32_t rawAngularRate24;
+    int32_t angularRateMilliDps;
+    int32_t angleMilliDeg;
+    int32_t biasMilliDps;
+    int32_t scalePpm;
+    uint32_t sampleCount;
+} HostLink_IMUSample;
+
 void HostLink_Init(void);
 void HostLink_Run(void);
 bool HostLink_IsReportingEnabled(void);
+bool HostLink_TakeZeroCalibrationRequest(void);
+bool HostLink_Take360CalibrationRequest(void);
 
 bool HostLink_SendTMP117TemperatureRaw(int16_t rawTemperature);
 bool HostLink_SendTMP117Error(TMP117_Status status);
 bool HostLink_SendHeaterState(bool enabled, uint16_t dutyPermille);
 bool HostLink_SendHeaterControlSample(
     const HostLink_HeaterControlSample *sample);
+bool HostLink_SendAppState(uint8_t state);
+bool HostLink_SendIMUSample(const HostLink_IMUSample *sample);
+bool HostLink_SendIMUCalibrationState(
+    uint8_t state, int32_t result, int32_t angleMilliDeg, int32_t scalePpm);
+bool HostLink_SendIMUError(int32_t status);
 
 #endif

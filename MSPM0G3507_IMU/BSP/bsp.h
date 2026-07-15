@@ -5,5 +5,6 @@
 
 void BSP_Init(void);
 uint32_t BSP_GetTickMs(void);
+uint32_t BSP_GetTickUs(void);
 
 #endif

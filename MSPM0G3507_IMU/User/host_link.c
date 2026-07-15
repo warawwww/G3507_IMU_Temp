@@ -6,11 +6,13 @@
 #include "bsp.h"
 #include "bsp_uart.h"
 
-#define HOST_LINK_FRAME_CAPACITY (96U)
+#define HOST_LINK_FRAME_CAPACITY (128U)
 #define HOST_LINK_RX_LINE_CAPACITY (32U)
 #define HOST_LINK_REPORT_TIMEOUT_MS (5000U)
 
 static bool g_reportingEnabled;
+static bool g_zeroCalibrationRequested;
+static bool g_360CalibrationRequested;
 static uint32_t g_lastHostMessageMs;
 static char g_rxLine[HOST_LINK_RX_LINE_CAPACITY];
 static size_t g_rxLineLength;
@@ -57,6 +59,16 @@ static void HostLink_ProcessCommand(const char *line)
         g_lastHostMessageMs = nowMs;
         (void) HostLink_WriteRawString(
             g_reportingEnabled ? "HOST,PONG,1\r\n" : "HOST,PONG,0\r\n");
+    } else if ((strcmp(line, "IMU_ZERO") == 0) ||
+        (strcmp(line, "ZERO") == 0)) {
+        g_zeroCalibrationRequested = true;
+        g_lastHostMessageMs = nowMs;
+        (void) HostLink_WriteRawString("HOST,OK,IMU_ZERO\r\n");
+    } else if ((strcmp(line, "IMU_CAL360") == 0) ||
+        (strcmp(line, "CAL360") == 0)) {
+        g_360CalibrationRequested = true;
+        g_lastHostMessageMs = nowMs;
+        (void) HostLink_WriteRawString("HOST,OK,IMU_CAL360\r\n");
     } else {
         (void) HostLink_WriteRawString("HOST,ERR,CMD\r\n");
     }
@@ -234,9 +246,112 @@ bool HostLink_SendHeaterControlSample(
         BSP_UART_PORT_TYPEC, (const uint8_t *) frame, length);
 }
 
+bool HostLink_SendAppState(uint8_t state)
+{
+    static const char prefix[] = "APP,STATE,";
+
+    if (!g_reportingEnabled) {
+        return true;
+    }
+
+    return HostLink_SendNumberFrame(
+        prefix, sizeof(prefix) - 1U, (int32_t) state);
+}
+
+bool HostLink_SendIMUSample(const HostLink_IMUSample *sample)
+{
+    static const char prefix[] = "IMU,S,";
+    int32_t fields[8];
+    char frame[HOST_LINK_FRAME_CAPACITY];
+    size_t length;
+    size_t index;
+
+    if (sample == NULL) {
+        return false;
+    }
+
+    if (!g_reportingEnabled) {
+        return true;
+    }
+
+    fields[0] = (int32_t) sample->timeMs;
+    fields[1] = (int32_t) sample->state;
+    fields[2] = sample->rawAngularRate24;
+    fields[3] = sample->angularRateMilliDps;
+    fields[4] = sample->angleMilliDeg;
+    fields[5] = sample->biasMilliDps;
+    fields[6] = sample->scalePpm;
+    fields[7] = (int32_t) sample->sampleCount;
+
+    memcpy(frame, prefix, sizeof(prefix) - 1U);
+    length = sizeof(prefix) - 1U;
+    for (index = 0U; index < (sizeof(fields) / sizeof(fields[0])); index++) {
+        length = HostLink_AppendInt32(frame, length, fields[index]);
+        frame[length++] = (index + 1U ==
+            (sizeof(fields) / sizeof(fields[0]))) ? '\r' : ',';
+    }
+    frame[length++] = '\n';
+
+    if (length > sizeof(frame)) {
+        return false;
+    }
+
+    return BSP_UART_Write(
+        BSP_UART_PORT_TYPEC, (const uint8_t *) frame, length);
+}
+
+bool HostLink_SendIMUCalibrationState(
+    uint8_t state, int32_t result, int32_t angleMilliDeg, int32_t scalePpm)
+{
+    static const char prefix[] = "IMU,CAL,";
+    int32_t fields[4];
+    char frame[HOST_LINK_FRAME_CAPACITY];
+    size_t length;
+    size_t index;
+
+    if (!g_reportingEnabled) {
+        return true;
+    }
+
+    fields[0] = (int32_t) state;
+    fields[1] = result;
+    fields[2] = angleMilliDeg;
+    fields[3] = scalePpm;
+
+    memcpy(frame, prefix, sizeof(prefix) - 1U);
+    length = sizeof(prefix) - 1U;
+    for (index = 0U; index < (sizeof(fields) / sizeof(fields[0])); index++) {
+        length = HostLink_AppendInt32(frame, length, fields[index]);
+        frame[length++] = (index + 1U ==
+            (sizeof(fields) / sizeof(fields[0]))) ? '\r' : ',';
+    }
+    frame[length++] = '\n';
+
+    if (length > sizeof(frame)) {
+        return false;
+    }
+
+    return BSP_UART_Write(
+        BSP_UART_PORT_TYPEC, (const uint8_t *) frame, length);
+}
+
+bool HostLink_SendIMUError(int32_t status)
+{
+    static const char prefix[] = "IMU,ERR,";
+
+    if (!g_reportingEnabled) {
+        return true;
+    }
+
+    return HostLink_SendNumberFrame(
+        prefix, sizeof(prefix) - 1U, status);
+}
+
 void HostLink_Init(void)
 {
     g_reportingEnabled = false;
+    g_zeroCalibrationRequested = false;
+    g_360CalibrationRequested = false;
     g_lastHostMessageMs = BSP_GetTickMs();
     g_rxLineLength = 0U;
     BSP_UART_FlushRx(BSP_UART_PORT_TYPEC);
@@ -261,4 +376,20 @@ void HostLink_Run(void)
 bool HostLink_IsReportingEnabled(void)
 {
     return g_reportingEnabled;
+}
+
+bool HostLink_TakeZeroCalibrationRequest(void)
+{
+    bool requested = g_zeroCalibrationRequested;
+
+    g_zeroCalibrationRequested = false;
+    return requested;
+}
+
+bool HostLink_Take360CalibrationRequest(void)
+{
+    bool requested = g_360CalibrationRequested;
+
+    g_360CalibrationRequested = false;
+    return requested;
 }

@@ -9,18 +9,14 @@
 - [ ] 支持上报频率配置：例如 `SUB TMP 1000` 表示 TMP 每 1000 ms 上报一次，而不是每次采样都上报。
 - [x] 支持停止上报和超时静默：收到 `STOP`/`OFF` 后停止发送；长时间没有上位机 `PING` 时自动回到静默模式。
 
+## 算法性能优化
+
+- [ ] 后续陀螺仪姿态解算、滤波、三角函数、平方根、atan2、定点矩阵/向量等复杂计算，优先评估使用 MSPM0 MATHACL 或 TI IQmath mathacl 库加速；当前温控 PID 计算量很小，暂不为它专门改 MATHACL。
+
 ## 当前状态
 
-- [ ] I2C 尚未完成实物联调：TMP117 是否应答、设备 ID 是否能读到 `0x0117` 均未确认。
 - [ ] SPI 尚未完成实物联调：XV7011 初始化与角速度数据读取结果未确认。
 
-## 下一步：示波器分析 I2C
-
-- [ ] 观察 SDA（PA0）和 SCL（PA1）空闲时是否均为高电平，确认外部上拉、供电和共地正常。
-- [ ] 捕获 TMP117 初始化的读 Device ID 时序：
-  `START -> 0x90 + ACK -> 0x0F + ACK -> Repeated START -> 0x91 + ACK -> 0x01 + ACK -> 0x17 + NACK -> STOP`。
-- [ ] 若地址字节 `0x90` 或 `0x91` 后没有从机 ACK，检查 TMP117 的 ADD0 地址配置（`0x48` 至 `0x4B`）、连线和供电。
-- [ ] 记录 `TMP117_Init()` 返回值，区分 `NOT_FOUND`、`TIMEOUT`、`BUS_BUSY` 和 `DEVICE_ID_MISMATCH`。
 
 ## 后续：DMA
 

@@ -52,8 +52,9 @@ typedef enum {
 } XV7011_HpfFrequency;
 
 /*
- * Selects 4-wire SPI, 16-bit angular-rate output and 12-bit temperature
- * output, then waits for the datasheet's 200 ms angular-rate startup time.
+ * 初始化陀螺仪接口和输出格式。
+ * 当前配置为 4 线 SPI、16 位角速度输出、12 位温度输出，
+ * 最后等待手册要求的 200 ms 角速度启动时间。
  */
 XV7011_Status XV7011_Init(void);
 
@@ -65,16 +66,42 @@ XV7011_Status XV7011_ReadAngularRateRaw(int16_t *rawAngularRate);
 XV7011_Status XV7011_ReadAngularRateDps(float *angularRateDps);
 XV7011_Status XV7011_ReadTemperatureRaw(int16_t *rawTemperature);
 XV7011_Status XV7011_ReadTemperatureC(float *temperatureC);
+/* 返回当前板子固定使用的 multi-slave SPI 地址位 A[6:5]。 */
+uint8_t XV7011_GetSpiAddressBits(void);
 
 XV7011_Status XV7011_SetLowPassFilter(
     XV7011_LpfOrder order, XV7011_LpfFrequency frequency);
 XV7011_Status XV7011_SetHighPassFilter(
     bool enable, XV7011_HpfFrequency frequency);
 
+/*
+ * 发送 SlpIn 命令，让陀螺仪进入 sleep 模式以降低功耗。
+ * 再次读取角速度前需要先调用 XV7011_Wake() 唤醒。
+ */
 XV7011_Status XV7011_Sleep(void);
+
+/*
+ * 发送 Stby 命令，让陀螺仪进入 standby 模式。
+ * 再次读取角速度前需要先调用 XV7011_Wake() 唤醒。
+ */
 XV7011_Status XV7011_Standby(void);
+
+/*
+ * 发送 SlpOut 命令，让陀螺仪退出 sleep/standby，并复位内部 DSP 通路。
+ * 驱动会等待手册要求的启动时间后再返回。
+ */
 XV7011_Status XV7011_Wake(void);
+
+/*
+ * 发送 SWRst 命令，复位用户命令寄存器。
+ * 命令完成后驱动会重新执行 XV7011_Init()，恢复接口和输出格式配置。
+ */
 XV7011_Status XV7011_SoftwareReset(void);
+
+/*
+ * 使能并发送 AutoC 零速率校准命令。
+ * 调用时需要保持板子静止，让陀螺仪更新零速率参考值。
+ */
 XV7011_Status XV7011_CalibrateZeroRate(void);
 
 #endif

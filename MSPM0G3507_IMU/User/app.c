@@ -16,6 +16,7 @@ volatile XV7011_Status g_gyroStatus = XV7011_STATUS_NOT_INITIALIZED;
 volatile int16_t g_gyroRaw;
 volatile float g_gyroDps;
 volatile bool g_gyroValid;
+volatile uint8_t g_gyroSpiAddressBits;
 
 static uint32_t g_lastGyroPollMs;
 static uint32_t g_lastHeartbeatMs;
@@ -31,6 +32,7 @@ void APP_Init(void)
 
     g_gyroValid      = false;
     g_gyroStatus     = XV7011_Init();
+    g_gyroSpiAddressBits = XV7011_GetSpiAddressBits();
     g_lastGyroPollMs = BSP_GetTickMs();
 }
 

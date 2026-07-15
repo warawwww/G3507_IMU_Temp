@@ -17,12 +17,13 @@
 #define XV7011_REG_ANGULAR_RATE   (0x0AU)
 #define XV7011_REG_OUTPUT_CTL     (0x0BU)
 #define XV7011_CMD_ZERO_CALIBRATE (0x0CU)
-#define XV7011_CMD_DSP_RESET      (0x0DU)
-#define XV7011_CMD_MEMORY_LOAD    (0x1BU)
 #define XV7011_REG_TEMP_FORMAT    (0x1CU)
 #define XV7011_REG_INTERFACE_CTL  (0x1FU)
 
 #define XV7011_SPI_READ_BIT (0x80U)
+#define XV7011_SPI_ADDRESS_BITS_SHIFT (5U)
+#define XV7011_SPI_REGISTER_MASK      (0x1FU)
+#define XV7021_SPI_ADDRESS_BITS       (3U)
 
 #define XV7011_INTERFACE_4WIRE_SPI (0x00U)
 #define XV7011_OUTPUT_16BIT_RATE   (0x01U)
@@ -43,6 +44,24 @@
 
 #define XV7011_SERIAL_WAIT_MS  (1U)
 #define XV7011_STARTUP_WAIT_MS (200U)
+
+static uint8_t XV7011_BuildAddress(uint8_t reg, bool read)
+{
+    uint8_t address = (uint8_t) (reg & XV7011_SPI_REGISTER_MASK);
+
+    address |= (uint8_t) ((XV7021_SPI_ADDRESS_BITS & 0x03U)
+                          << XV7011_SPI_ADDRESS_BITS_SHIFT);
+    if (read) {
+        address |= XV7011_SPI_READ_BIT;
+    }
+
+    return address;
+}
+
+static bool XV7011_IsInterfaceValueValid(uint8_t value)
+{
+    return (value & 0xFEU) == 0U;
+}
 
 static XV7011_Status XV7011_MapSPIStatus(BSP_SPI_Status status)
 {
@@ -88,24 +107,24 @@ static bool XV7011_IsCommand(uint8_t command)
            (command == XV7011_CMD_WAKE) ||
            (command == XV7011_CMD_STANDBY) ||
            (command == XV7011_CMD_SOFTWARE_RESET) ||
-           (command == XV7011_CMD_ZERO_CALIBRATE) ||
-           (command == XV7011_CMD_DSP_RESET) ||
-           (command == XV7011_CMD_MEMORY_LOAD);
+           (command == XV7011_CMD_ZERO_CALIBRATE);
 }
 
 static XV7011_Status XV7011_SendCommand(uint8_t command)
 {
+    uint8_t address;
+
     if (!XV7011_IsCommand(command)) {
         return XV7011_STATUS_INVALID_ARGUMENT;
     }
 
-    return XV7011_MapSPIStatus(
-        BSP_SPI_GyroTransfer(&command, NULL, 1U));
+    address = XV7011_BuildAddress(command, false);
+    return XV7011_MapSPIStatus(BSP_SPI_GyroTransfer(&address, NULL, 1U));
 }
 
 XV7011_Status XV7011_ReadRegister(uint8_t reg, uint8_t *value)
 {
-    uint8_t txData[2] = {(uint8_t) (XV7011_SPI_READ_BIT | reg), 0U};
+    uint8_t txData[2] = {XV7011_BuildAddress(reg, true), 0U};
     uint8_t rxData[2];
     BSP_SPI_Status busStatus;
 
@@ -124,7 +143,7 @@ XV7011_Status XV7011_ReadRegister(uint8_t reg, uint8_t *value)
 
 XV7011_Status XV7011_WriteRegister(uint8_t reg, uint8_t value)
 {
-    uint8_t txData[2] = {reg, value};
+    uint8_t txData[2] = {XV7011_BuildAddress(reg, false), value};
 
     if (!XV7011_IsWritableRegister(reg)) {
         return XV7011_STATUS_INVALID_ARGUMENT;
@@ -132,6 +151,11 @@ XV7011_Status XV7011_WriteRegister(uint8_t reg, uint8_t value)
 
     return XV7011_MapSPIStatus(
         BSP_SPI_GyroTransfer(txData, NULL, sizeof(txData)));
+}
+
+uint8_t XV7011_GetSpiAddressBits(void)
+{
+    return XV7021_SPI_ADDRESS_BITS;
 }
 
 XV7011_Status XV7011_Init(void)
@@ -146,9 +170,7 @@ XV7011_Status XV7011_Init(void)
     if (status != XV7011_STATUS_OK) {
         return status;
     }
-
-    /* Reserved bits and SPISel must be zero. I2C_EN may be 0 or its default 1. */
-    if ((value & 0xFEU) != 0U) {
+    if (!XV7011_IsInterfaceValueValid(value)) {
         return XV7011_STATUS_NOT_FOUND;
     }
 
@@ -219,7 +241,7 @@ XV7011_Status XV7011_ReadStatus(uint8_t *status)
 XV7011_Status XV7011_ReadAngularRateRaw(int16_t *rawAngularRate)
 {
     uint8_t txData[3] = {
-        (uint8_t) (XV7011_SPI_READ_BIT | XV7011_REG_ANGULAR_RATE), 0U, 0U};
+        XV7011_BuildAddress(XV7011_REG_ANGULAR_RATE, true), 0U, 0U};
     uint8_t rxData[3];
     BSP_SPI_Status busStatus;
 
@@ -259,7 +281,7 @@ XV7011_Status XV7011_ReadAngularRateDps(float *angularRateDps)
 XV7011_Status XV7011_ReadTemperatureRaw(int16_t *rawTemperature)
 {
     uint8_t txData[3] = {
-        (uint8_t) (XV7011_SPI_READ_BIT | XV7011_REG_TEMPERATURE), 0U, 0U};
+        XV7011_BuildAddress(XV7011_REG_TEMPERATURE, true), 0U, 0U};
     uint8_t rxData[3];
     uint16_t raw;
     BSP_SPI_Status busStatus;
@@ -328,7 +350,7 @@ XV7011_Status XV7011_SetLowPassFilter(
         return status;
     }
 
-    return XV7011_SendCommand(XV7011_CMD_DSP_RESET);
+    return XV7011_STATUS_OK;
 }
 
 XV7011_Status XV7011_SetHighPassFilter(
@@ -359,7 +381,7 @@ XV7011_Status XV7011_SetHighPassFilter(
         return status;
     }
 
-    return XV7011_SendCommand(XV7011_CMD_DSP_RESET);
+    return XV7011_STATUS_OK;
 }
 
 XV7011_Status XV7011_Sleep(void)

@@ -1,6 +1,5 @@
 #include "heater_task.h"
 
-#include "KEY.h"
 #include "bsp.h"
 #include "heater.h"
 #include "host_link.h"
@@ -189,7 +188,7 @@ static void Heater_Task_QueueControlSample(uint32_t nowMs,
     g_controlSamplePending = true;
 }
 
-static void Heater_Task_Disable(void)
+void Heater_Task_Disable(void)
 {
     bool stateChanged =
         g_heaterEnabled || (Heater_GetDutyPermille() != 0U);
@@ -212,7 +211,7 @@ static void Heater_Task_Disable(void)
     }
 }
 
-static void Heater_Task_Enable(uint32_t nowMs)
+static void Heater_Task_EnableAt(uint32_t nowMs)
 {
     float temperatureC;
 
@@ -370,14 +369,6 @@ void Heater_Task_Run(void)
 {
     uint32_t nowMs = BSP_GetTickMs();
 
-    if (KEY_WasLongPressed()) {
-        if (g_heaterEnabled) {
-            Heater_Task_Disable();
-        } else {
-            Heater_Task_Enable(nowMs);
-        }
-    }
-
     Heater_Task_UpdateControl(nowMs);
 
     /* TMP117 reports first and may briefly own the DMA TX buffer. Retry the
@@ -404,6 +395,17 @@ void Heater_Task_Run(void)
 bool Heater_Task_IsEnabled(void)
 {
     return g_heaterEnabled;
+}
+
+void Heater_Task_Enable(void)
+{
+    Heater_Task_EnableAt(BSP_GetTickMs());
+}
+
+bool Heater_Task_IsStable(void)
+{
+    return g_heaterEnabled && g_pidActive &&
+        (g_pidMode == HEATER_PID_MODE_HOLD);
 }
 
 uint8_t Heater_Task_GetDutyPercent(void)

@@ -25,8 +25,18 @@
 #define IMU_TASK_SCALE_CORRECTION_MIN       (0.80f)
 #define IMU_TASK_SCALE_CORRECTION_MAX       (1.20f)
 #define IMU_TASK_SATURATION_RATE_DPS        (380.0f)
-#define IMU_TASK_MILLI_SCALE                (1000.0f)
-#define IMU_TASK_PPM_SCALE                  (1000000.0f)
+#define IMU_TASK_STATIC_HOLD_WINDOW_MS      (200U)
+#define IMU_TASK_STATIC_HOLD_ENTER_MEAN_ABS_DPS \
+    (0.025f)
+#define IMU_TASK_STATIC_HOLD_ENTER_VARIANCE_DPS2 \
+    (0.001225f)
+#define IMU_TASK_STATIC_HOLD_ENTER_MAX_ABS_DPS \
+    (0.10f)
+#define IMU_TASK_STATIC_HOLD_EXIT_RATE_DPS (0.12f)
+#define IMU_TASK_STATIC_HOLD_EXIT_MEAN_ABS_DPS \
+    (0.06f)
+#define IMU_TASK_MILLI_SCALE (1000.0f)
+#define IMU_TASK_PPM_SCALE   (1000000.0f)
 
 typedef enum {
     IMU_TASK_ROTATION_PHASE_IDLE = 0,
@@ -41,6 +51,16 @@ typedef struct {
     float m2Dps;
     float maxAbsDps;
 } IMU_Task_Stats;
+
+typedef struct {
+    uint32_t startMs;
+    uint32_t count;
+    float sumRateDps;
+    float sumRateDps2;
+    float sumAbsRateDps;
+    float maxAbsRateDps;
+    bool holding;
+} IMU_Task_StaticHold;
 
 static IMU_Task_State g_state;
 static IMU_Task_CalibrationResult g_calibrationResult;
@@ -73,6 +93,7 @@ static bool g_rotationSaturated;
 static uint32_t g_rotationLastUs;
 static IMU_Task_RotationPhase g_rotationPhase;
 static IMU_Task_Stats g_stats;
+static IMU_Task_StaticHold g_staticHold;
 
 static float IMU_Task_AbsFloat(float value)
 {
@@ -146,6 +167,80 @@ static void IMU_Task_ResetStats(void)
     g_stats.maxAbsDps = 0.0f;
 }
 
+static void IMU_Task_ResetStaticHoldWindow(uint32_t nowMs)
+{
+    g_staticHold.startMs       = nowMs;
+    g_staticHold.count         = 0U;
+    g_staticHold.sumRateDps    = 0.0f;
+    g_staticHold.sumRateDps2   = 0.0f;
+    g_staticHold.sumAbsRateDps = 0.0f;
+    g_staticHold.maxAbsRateDps = 0.0f;
+}
+
+static void IMU_Task_ResetStaticHold(uint32_t nowMs)
+{
+    g_staticHold.holding = false;
+    IMU_Task_ResetStaticHoldWindow(nowMs);
+}
+
+static void IMU_Task_UpdateStaticHoldWindow(float rateDps)
+{
+    float absRateDps = IMU_Task_AbsFloat(rateDps);
+
+    g_staticHold.count++;
+    g_staticHold.sumRateDps += rateDps;
+    g_staticHold.sumRateDps2 += rateDps * rateDps;
+    g_staticHold.sumAbsRateDps += absRateDps;
+    if (absRateDps > g_staticHold.maxAbsRateDps) {
+        g_staticHold.maxAbsRateDps = absRateDps;
+    }
+}
+
+static float IMU_Task_ApplyStaticHold(uint32_t nowMs, float rateDps)
+{
+    float absRateDps = IMU_Task_AbsFloat(rateDps);
+
+    if (g_staticHold.holding &&
+        (absRateDps > IMU_TASK_STATIC_HOLD_EXIT_RATE_DPS)) {
+        g_staticHold.holding = false;
+        IMU_Task_ResetStaticHoldWindow(nowMs);
+    }
+
+    IMU_Task_UpdateStaticHoldWindow(rateDps);
+
+    if ((uint32_t)(nowMs - g_staticHold.startMs) >=
+        IMU_TASK_STATIC_HOLD_WINDOW_MS) {
+        float count          = (float)g_staticHold.count;
+        float meanRateDps    = g_staticHold.sumRateDps / count;
+        float meanAbsRateDps = g_staticHold.sumAbsRateDps / count;
+        float varianceDps2 =
+            (g_staticHold.sumRateDps2 / count) -
+            (meanRateDps * meanRateDps);
+
+        if (varianceDps2 < 0.0f) {
+            varianceDps2 = 0.0f;
+        }
+
+        if (g_staticHold.holding) {
+            if (meanAbsRateDps >
+                IMU_TASK_STATIC_HOLD_EXIT_MEAN_ABS_DPS) {
+                g_staticHold.holding = false;
+            }
+        } else if ((meanAbsRateDps <
+                    IMU_TASK_STATIC_HOLD_ENTER_MEAN_ABS_DPS) &&
+                   (varianceDps2 <
+                    IMU_TASK_STATIC_HOLD_ENTER_VARIANCE_DPS2) &&
+                   (g_staticHold.maxAbsRateDps <
+                    IMU_TASK_STATIC_HOLD_ENTER_MAX_ABS_DPS)) {
+            g_staticHold.holding = true;
+        }
+
+        IMU_Task_ResetStaticHoldWindow(nowMs);
+    }
+
+    return g_staticHold.holding ? 0.0f : rateDps;
+}
+
 static void IMU_Task_UpdateStats(int32_t rawAngularRate24, float rawDps)
 {
     float count;
@@ -204,6 +299,7 @@ static void IMU_Task_ResetIntegration(uint32_t nowMs)
     g_previousRateValid         = false;
     g_lastSampleMs              = nowMs;
     g_lastSampleUs              = BSP_GetTickUs();
+    IMU_Task_ResetStaticHold(nowMs);
 }
 
 static void IMU_Task_EnterReady(uint32_t nowMs)
@@ -220,6 +316,7 @@ static void IMU_Task_SetError(XV7021_Status status)
     g_sample.state      = g_state;
     g_previousRateValid = false;
     g_rotationPhase     = IMU_TASK_ROTATION_PHASE_IDLE;
+    IMU_Task_ResetStaticHold(BSP_GetTickMs());
     IMU_Task_SetCalibrationResult(IMU_TASK_CAL_RESULT_SENSOR_ERROR);
     (void)HostLink_SendIMUError((int32_t)status);
 }
@@ -280,8 +377,9 @@ static void IMU_Task_StartZeroCalibrationAt(
     g_calibrationStartMs        = nowMs;
     g_phaseStartMs              = nowMs;
     g_zeroCalibrationCollecting = false;
-    g_state                     = IMU_TASK_STATE_ZERO_CALIBRATING;
-    g_sample.state              = g_state;
+    IMU_Task_ResetStaticHold(nowMs);
+    g_state        = IMU_TASK_STATE_ZERO_CALIBRATING;
+    g_sample.state = g_state;
     IMU_Task_ResetStats();
     IMU_Task_SetCalibrationResult(IMU_TASK_CAL_RESULT_BUSY);
 }
@@ -341,9 +439,10 @@ static void IMU_Task_StartRotationCalibrationAt(
     g_rotationStillStartMs      = nowMs;
     g_calibrationStartMs        = nowMs;
     g_phaseStartMs              = nowMs;
-    g_rotationPhase             = IMU_TASK_ROTATION_PHASE_PRE_STATIC;
-    g_state                     = IMU_TASK_STATE_360_CALIBRATING;
-    g_sample.state              = g_state;
+    IMU_Task_ResetStaticHold(nowMs);
+    g_rotationPhase = IMU_TASK_ROTATION_PHASE_PRE_STATIC;
+    g_state         = IMU_TASK_STATE_360_CALIBRATING;
+    g_sample.state  = g_state;
     IMU_Task_ResetStats();
     IMU_Task_SetCalibrationResult(IMU_TASK_CAL_RESULT_BUSY);
 }
@@ -537,6 +636,7 @@ static void IMU_Task_ReadSample(uint32_t nowMs)
     uint32_t sampleUs;
     float rawDps;
     float correctedRateDps;
+    float rateForIntegralDps;
 
     g_sensorStatus = XV7021_ReadAngularRateRaw24(&rawAngularRate24);
     if (g_sensorStatus != XV7021_STATUS_OK) {
@@ -549,14 +649,21 @@ static void IMU_Task_ReadSample(uint32_t nowMs)
     correctedRateDps = IMU_Task_Raw24ToDps(
                            (float)rawAngularRate24 - g_biasRaw24) *
                        g_scaleCorrection;
+    rateForIntegralDps = correctedRateDps;
+    if (g_state == IMU_TASK_STATE_READY) {
+        rateForIntegralDps =
+            IMU_Task_ApplyStaticHold(nowMs, correctedRateDps);
+    } else {
+        IMU_Task_ResetStaticHold(nowMs);
+    }
 
-    IMU_Task_UpdateIntegratedAngle(sampleUs, correctedRateDps);
+    IMU_Task_UpdateIntegratedAngle(sampleUs, rateForIntegralDps);
     g_lastSampleMs = nowMs;
 
     g_sample.timeMs = nowMs;
     g_sample.sampleCount++;
     g_sample.rawAngularRate24 = rawAngularRate24;
-    g_sample.angularRateDps   = correctedRateDps;
+    g_sample.angularRateDps   = rateForIntegralDps;
     g_sample.biasDps          = IMU_Task_Raw24ToDps(g_biasRaw24);
     g_sample.scaleCorrection  = g_scaleCorrection;
     g_sample.state            = g_state;

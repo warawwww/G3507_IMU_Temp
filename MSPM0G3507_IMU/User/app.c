@@ -7,6 +7,7 @@
 #include "LED.h"
 #include "bsp.h"
 #include "heater_task.h"
+#include "host_link.h"
 #include "tmp_task.h"
 
 #define APP_HEATING_LED_PERIOD_MS (200U)
@@ -103,6 +104,7 @@ void APP_Init(void)
     g_heaterStartPending = true;
 
     KEY_Init();
+    HostLink_Init();
     TMP_Task_Init();
     Heater_Task_Init();
 }
@@ -112,6 +114,7 @@ void APP_Run(void)
     uint32_t nowMs;
 
     KEY_Update();
+    HostLink_Run();
     TMP_Task_Run();
     APP_UpdateState();
     Heater_Task_Run();

@@ -18,6 +18,11 @@
  *   HEATER,CTRL,<time ms>,<phase>,<temperature mC>,<target mC>,
  *       <duty permille>,<feedforward permille>,<PID correction permille>,
  *       <Kp x1000>,<Ki x1000>,<Kd x1000>
+ *
+ * Host commands on Type-C UART:
+ *   START / HELLO / ON  enable continuous reporting
+ *   STOP / OFF          disable continuous reporting
+ *   PING                keep reporting alive before timeout
  */
 typedef enum {
     HOST_LINK_HEATER_PHASE_RAPID = 1,
@@ -36,6 +41,10 @@ typedef struct {
     int32_t kiMilli;
     int32_t kdMilli;
 } HostLink_HeaterControlSample;
+
+void HostLink_Init(void);
+void HostLink_Run(void);
+bool HostLink_IsReportingEnabled(void);
 
 bool HostLink_SendTMP117TemperatureRaw(int16_t rawTemperature);
 bool HostLink_SendTMP117Error(TMP117_Status status);

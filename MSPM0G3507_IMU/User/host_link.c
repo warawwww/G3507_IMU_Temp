@@ -3,9 +3,87 @@
 #include <stddef.h>
 #include <string.h>
 
+#include "bsp.h"
 #include "bsp_uart.h"
 
 #define HOST_LINK_FRAME_CAPACITY (96U)
+#define HOST_LINK_RX_LINE_CAPACITY (32U)
+#define HOST_LINK_REPORT_TIMEOUT_MS (5000U)
+
+static bool g_reportingEnabled;
+static uint32_t g_lastHostMessageMs;
+static char g_rxLine[HOST_LINK_RX_LINE_CAPACITY];
+static size_t g_rxLineLength;
+
+static bool HostLink_WriteRawString(const char *string)
+{
+    size_t length;
+
+    if (string == NULL) {
+        return false;
+    }
+
+    length = strlen(string);
+    return BSP_UART_Write(
+        BSP_UART_PORT_TYPEC, (const uint8_t *) string, length);
+}
+
+static void HostLink_EnableReporting(uint32_t nowMs)
+{
+    g_reportingEnabled = true;
+    g_lastHostMessageMs = nowMs;
+    (void) HostLink_WriteRawString("HOST,OK,START\r\n");
+}
+
+static void HostLink_DisableReporting(uint32_t nowMs)
+{
+    g_reportingEnabled = false;
+    g_lastHostMessageMs = nowMs;
+    (void) HostLink_WriteRawString("HOST,OK,STOP\r\n");
+}
+
+static void HostLink_ProcessCommand(const char *line)
+{
+    uint32_t nowMs = BSP_GetTickMs();
+
+    if ((strcmp(line, "START") == 0) ||
+        (strcmp(line, "HELLO") == 0) ||
+        (strcmp(line, "ON") == 0)) {
+        HostLink_EnableReporting(nowMs);
+    } else if ((strcmp(line, "STOP") == 0) ||
+        (strcmp(line, "OFF") == 0)) {
+        HostLink_DisableReporting(nowMs);
+    } else if (strcmp(line, "PING") == 0) {
+        g_lastHostMessageMs = nowMs;
+        (void) HostLink_WriteRawString(
+            g_reportingEnabled ? "HOST,PONG,1\r\n" : "HOST,PONG,0\r\n");
+    } else {
+        (void) HostLink_WriteRawString("HOST,ERR,CMD\r\n");
+    }
+}
+
+static void HostLink_ProcessRxByte(uint8_t byte)
+{
+    if (byte == '\r') {
+        return;
+    }
+
+    if (byte == '\n') {
+        g_rxLine[g_rxLineLength] = '\0';
+        if (g_rxLineLength != 0U) {
+            HostLink_ProcessCommand(g_rxLine);
+        }
+        g_rxLineLength = 0U;
+        return;
+    }
+
+    if (g_rxLineLength >= (sizeof(g_rxLine) - 1U)) {
+        g_rxLineLength = 0U;
+        return;
+    }
+
+    g_rxLine[g_rxLineLength++] = (char) byte;
+}
 
 static size_t HostLink_AppendInt32(char *buffer, size_t position,
     int32_t value)
@@ -58,6 +136,10 @@ bool HostLink_SendTMP117TemperatureRaw(int16_t rawTemperature)
     int32_t scaledTemperature = (int32_t) rawTemperature * 1000;
     int32_t temperatureMilliC;
 
+    if (!g_reportingEnabled) {
+        return true;
+    }
+
     /* TMP117 temperature LSB is exactly 1 / 128 degree Celsius. */
     if (scaledTemperature >= 0) {
         scaledTemperature += 64;
@@ -74,6 +156,10 @@ bool HostLink_SendTMP117Error(TMP117_Status status)
 {
     static const char prefix[] = "TMP117,ERR,";
 
+    if (!g_reportingEnabled) {
+        return true;
+    }
+
     return HostLink_SendNumberFrame(
         prefix, sizeof(prefix) - 1U, (int32_t) status);
 }
@@ -83,6 +169,10 @@ bool HostLink_SendHeaterState(bool enabled, uint16_t dutyPermille)
     static const char prefix[] = "HEATER,STATE,";
     char frame[HOST_LINK_FRAME_CAPACITY];
     size_t length;
+
+    if (!g_reportingEnabled) {
+        return true;
+    }
 
     memcpy(frame, prefix, sizeof(prefix) - 1U);
     length = sizeof(prefix) - 1U;
@@ -112,6 +202,10 @@ bool HostLink_SendHeaterControlSample(
         return false;
     }
 
+    if (!g_reportingEnabled) {
+        return true;
+    }
+
     fields[0] = (int32_t) sample->timeMs;
     fields[1] = (int32_t) sample->phase;
     fields[2] = sample->temperatureMilliC;
@@ -138,4 +232,33 @@ bool HostLink_SendHeaterControlSample(
 
     return BSP_UART_Write(
         BSP_UART_PORT_TYPEC, (const uint8_t *) frame, length);
+}
+
+void HostLink_Init(void)
+{
+    g_reportingEnabled = false;
+    g_lastHostMessageMs = BSP_GetTickMs();
+    g_rxLineLength = 0U;
+    BSP_UART_FlushRx(BSP_UART_PORT_TYPEC);
+}
+
+void HostLink_Run(void)
+{
+    uint8_t byte;
+    uint32_t nowMs = BSP_GetTickMs();
+
+    while (BSP_UART_TryReadByte(BSP_UART_PORT_TYPEC, &byte)) {
+        HostLink_ProcessRxByte(byte);
+    }
+
+    if (g_reportingEnabled &&
+        ((uint32_t) (nowMs - g_lastHostMessageMs) >=
+            HOST_LINK_REPORT_TIMEOUT_MS)) {
+        g_reportingEnabled = false;
+    }
+}
+
+bool HostLink_IsReportingEnabled(void)
+{
+    return g_reportingEnabled;
 }

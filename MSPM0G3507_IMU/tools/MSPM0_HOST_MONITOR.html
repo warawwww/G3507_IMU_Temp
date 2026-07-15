@@ -213,6 +213,7 @@
       <div class="controls">
         <button id="connectButton" class="primary">连接串口</button>
         <button id="disconnectButton" disabled>断开</button>
+        <button id="reportButton" disabled>暂停上报</button>
         <button id="clearDataButton">清空记录</button>
         <button id="saveCsvButton" disabled>保存 CSV</button>
       </div>
@@ -269,6 +270,7 @@
 
   <script>
     const BAUD_RATE = 115200;
+    const HOST_HEARTBEAT_PERIOD_MS = 1000;
     const HISTORY_LIMIT = 240;
     const CONTROL_RECORD_LIMIT = 250000;
     const LOG_LIMIT = 100;
@@ -283,6 +285,7 @@
 
     const connectButton = document.querySelector('#connectButton');
     const disconnectButton = document.querySelector('#disconnectButton');
+    const reportButton = document.querySelector('#reportButton');
     const clearDataButton = document.querySelector('#clearDataButton');
     const saveCsvButton = document.querySelector('#saveCsvButton');
     const temperatureElement = document.querySelector('#temperature');
@@ -300,12 +303,15 @@
     let port = null;
     let reader = null;
     let readTask = null;
+    let heartbeatTimer = null;
+    let reportingRequested = false;
     let keepReading = false;
     let receiveBuffer = '';
     let frameCount = 0;
     const history = [];
     const controlRecords = [];
     const logLines = [];
+    const commandEncoder = new TextEncoder();
 
     function setStatus(text, state = '') {
       statusText.textContent = text;
@@ -319,6 +325,72 @@
       logElement.scrollTop = logElement.scrollHeight;
     }
 
+    function setReportControl(enabled) {
+      reportingRequested = enabled;
+      reportButton.disabled = !port;
+      reportButton.textContent = enabled ? '暂停上报' : '开始上报';
+    }
+
+    function stopHeartbeat() {
+      if (heartbeatTimer !== null) {
+        clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+      }
+    }
+
+    async function sendHostCommand(command, logCommand = true) {
+      if (!port?.writable) return false;
+
+      const writer = port.writable.getWriter();
+      try {
+        await writer.write(commandEncoder.encode(`${command}\r\n`));
+        if (logCommand) appendLog(`HOST> ${command}`);
+        return true;
+      } catch (error) {
+        appendLog(`命令发送失败：${error.message}`);
+        setStatus('命令发送失败', 'error');
+        return false;
+      } finally {
+        writer.releaseLock();
+      }
+    }
+
+    function startHeartbeat() {
+      stopHeartbeat();
+      heartbeatTimer = setInterval(() => {
+        if (port && reportingRequested) void sendHostCommand('PING', false);
+      }, HOST_HEARTBEAT_PERIOD_MS);
+    }
+
+    async function requestReporting(enabled) {
+      const command = enabled ? 'START' : 'STOP';
+      const sent = await sendHostCommand(command);
+      if (!sent) return;
+
+      setReportControl(enabled);
+      if (enabled) {
+        startHeartbeat();
+        setStatus('串口已连接，上报已开启', 'online');
+      } else {
+        stopHeartbeat();
+        setStatus('串口已连接，上报已暂停', 'online');
+      }
+    }
+
+    function handleHostFrame(fields) {
+      if (fields[1] === 'OK' && fields[2] === 'START') {
+        setReportControl(true);
+        setStatus('设备已开启上报', 'online');
+      } else if (fields[1] === 'OK' && fields[2] === 'STOP') {
+        setReportControl(false);
+        setStatus('设备已停止上报', 'online');
+      } else if (fields[1] === 'PONG') {
+        setReportControl(fields[2] === '1');
+      } else if (fields[1] === 'ERR') {
+        setStatus('设备命令错误', 'error');
+      }
+    }
+
     function setHeaterState(enabled, dutyPercent) {
       heaterStateElement.textContent = enabled ? '加热中' : '已关闭';
       heaterStateElement.className = `heater-state ${enabled ? 'on' : 'off'}`;
@@ -330,10 +402,20 @@
       const line = input.trim();
       if (!line) return;
 
+      const fields = line.split(',');
+      if (fields[0] === 'HOST' && fields[1] === 'PONG') {
+        handleHostFrame(fields);
+        return;
+      }
+
       appendLog(line);
       frameCount += 1;
       frameCountElement.textContent = String(frameCount);
-      const fields = line.split(',');
+
+      if (fields[0] === 'HOST') {
+        handleHostFrame(fields);
+        return;
+      }
 
       if (fields[0] === 'HEATER' && fields[1] === 'CTRL' &&
           fields.length === 12 &&
@@ -584,8 +666,12 @@
         }
       } finally {
         keepReading = false;
+        stopHeartbeat();
+        reportingRequested = false;
         connectButton.disabled = false;
         disconnectButton.disabled = true;
+        reportButton.disabled = true;
+        reportButton.textContent = '开始上报';
       }
     }
 
@@ -603,6 +689,7 @@
         keepReading = true;
         connectButton.disabled = true;
         disconnectButton.disabled = false;
+        setReportControl(false);
         setStatus('串口已连接，等待数据', 'online');
         heaterStateElement.textContent = '等待状态';
         heaterStateElement.className = 'heater-state';
@@ -610,6 +697,7 @@
         heaterUpdateTime.textContent = '--';
         appendLog('串口已连接');
         readTask = readSerial();
+        await requestReporting(true);
       } catch (error) {
         appendLog(`连接失败：${error.message}`);
         setStatus('连接失败', 'error');
@@ -617,8 +705,10 @@
     }
 
     async function disconnectSerial() {
-      keepReading = false;
+      stopHeartbeat();
       try {
+        if (port?.writable) await sendHostCommand('STOP');
+        keepReading = false;
         if (reader) await reader.cancel();
         if (readTask) await readTask;
         if (port) await port.close();
@@ -630,6 +720,9 @@
         port = null;
         connectButton.disabled = false;
         disconnectButton.disabled = true;
+        reportButton.disabled = true;
+        reportButton.textContent = '开始上报';
+        reportingRequested = false;
         setStatus('未连接');
         heaterStateElement.textContent = '未连接';
         heaterStateElement.className = 'heater-state';
@@ -645,6 +738,9 @@
     } else {
       connectButton.addEventListener('click', connectSerial);
       disconnectButton.addEventListener('click', disconnectSerial);
+      reportButton.addEventListener('click', () => {
+        void requestReporting(!reportingRequested);
+      });
       navigator.serial.addEventListener('disconnect', event => {
         if (event.target === port) void disconnectSerial();
       });

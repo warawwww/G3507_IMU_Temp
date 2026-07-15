@@ -32,6 +32,7 @@ PID_Init(&g_temperaturePid, &g_temperaturePidConfig);
 /* Call once every 125 ms. */
 float dutyPercent;
 if (PID_Compute(&g_temperaturePid, targetC, measuredC, &dutyPercent)) {
-    Heater_SetDutyPercent((uint8_t) (dutyPercent + 0.5f));
+    uint16_t dutyPermille = (uint16_t) (dutyPercent * 10.0f + 0.5f);
+    Heater_SetDutyPermille(dutyPermille);
 }
 ```

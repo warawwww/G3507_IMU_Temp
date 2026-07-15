@@ -3,7 +3,6 @@
 #include "ti_msp_dl_config.h"
 
 #define BSP_PWM_MAX_DUTY_PERMILLE (1000U)
-#define BSP_PWM_PERMILLE_PER_PERCENT (10U)
 
 static uint16_t g_dutyPermille;
 
@@ -18,23 +17,6 @@ void BSP_PWM_Init(void)
     BSP_PWM_ForceOutputLow();
     DL_TimerG_stopCounter(PWM_OUTPUT_INST);
     g_dutyPermille = 0U;
-}
-
-bool BSP_PWM_SetDutyPercent(uint8_t dutyPercent)
-{
-    if (dutyPercent > 100U) {
-        return false;
-    }
-
-    return BSP_PWM_SetDutyPermille(
-        (uint16_t) dutyPercent * BSP_PWM_PERMILLE_PER_PERCENT);
-}
-
-uint8_t BSP_PWM_GetDutyPercent(void)
-{
-    return (uint8_t) ((g_dutyPermille +
-        (BSP_PWM_PERMILLE_PER_PERCENT / 2U)) /
-        BSP_PWM_PERMILLE_PER_PERCENT);
 }
 
 bool BSP_PWM_SetDutyPermille(uint16_t dutyPermille)

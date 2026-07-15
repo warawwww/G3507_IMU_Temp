@@ -4,28 +4,25 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/** 初始化加热任务，加热输出默认为关闭。 */
+/** Initialize heater control. Output is off by default. */
 void Heater_Task_Init(void);
 
-/** 处理温度闭环和加热状态上报，需要在主循环中周期调用。 */
+/** Run temperature control and heater status reporting. */
 void Heater_Task_Run(void);
 
-/** 启用温度闭环加热。 */
+/** Enable closed-loop heating. */
 void Heater_Task_Enable(void);
 
-/** 关闭温度闭环加热。 */
+/** Disable closed-loop heating and turn off output. */
 void Heater_Task_Disable(void);
 
-/** 返回当前是否已启用温度闭环。 */
+/** Return whether closed-loop heating is enabled. */
 bool Heater_Task_IsEnabled(void);
 
-/** 返回当前加热闭环是否已经进入稳定保持阶段。 */
+/** Return whether the heater has entered the stable hold phase. */
 bool Heater_Task_IsStable(void);
 
-/** 返回当前加热 PWM 占空比。 */
-uint8_t Heater_Task_GetDutyPercent(void);
-
-/** 返回当前加热 PWM 占空比，单位为 0.1%。 */
+/** Return current heater PWM duty in 0.1% units. */
 uint16_t Heater_Task_GetDutyPermille(void);
 
 #endif

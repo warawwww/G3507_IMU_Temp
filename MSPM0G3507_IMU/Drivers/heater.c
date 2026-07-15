@@ -4,12 +4,7 @@
 
 void Heater_Init(void)
 {
-    (void) BSP_PWM_SetDutyPercent(0U);
-}
-
-bool Heater_SetDutyPercent(uint8_t dutyPercent)
-{
-    return BSP_PWM_SetDutyPercent(dutyPercent);
+    (void) BSP_PWM_SetDutyPermille(0U);
 }
 
 bool Heater_SetDutyPermille(uint16_t dutyPermille)
@@ -19,20 +14,10 @@ bool Heater_SetDutyPermille(uint16_t dutyPermille)
 
 void Heater_Off(void)
 {
-    (void) BSP_PWM_SetDutyPercent(0U);
-}
-
-uint8_t Heater_GetDutyPercent(void)
-{
-    return BSP_PWM_GetDutyPercent();
+    (void) BSP_PWM_SetDutyPermille(0U);
 }
 
 uint16_t Heater_GetDutyPermille(void)
 {
     return BSP_PWM_GetDutyPermille();
-}
-
-bool Heater_IsEnabled(void)
-{
-    return Heater_GetDutyPermille() != 0U;
 }

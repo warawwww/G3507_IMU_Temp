@@ -55,7 +55,7 @@ static PID_Controller g_holdPid;
 static PID_Controller *g_activePid;
 static bool g_pidReady;
 static bool g_pidActive;
-static bool g_heaterEnabled;
+static bool g_controlEnabled;
 static bool g_reportPending;
 static bool g_controlSamplePending;
 static uint32_t g_lastControlMs;
@@ -188,10 +188,39 @@ static void Heater_Task_QueueControlSample(uint32_t nowMs,
     g_controlSamplePending = true;
 }
 
+static bool Heater_Task_ReadSafeTemperature(float *temperatureC)
+{
+    return TMP_Task_GetTemperatureC(temperatureC) &&
+        (*temperatureC < HEATER_OVERTEMPERATURE_C);
+}
+
+static bool Heater_Task_IsControlDue(uint32_t nowMs)
+{
+    if (!g_controlEnabled ||
+        ((uint32_t) (nowMs - g_lastControlMs) <
+            HEATER_CONTROL_PERIOD_MS)) {
+        return false;
+    }
+
+    g_lastControlMs = nowMs;
+    return true;
+}
+
+static uint16_t Heater_Task_DutyPercentToPermille(float dutyPercent)
+{
+    if (dutyPercent < 0.0f) {
+        dutyPercent = 0.0f;
+    } else if (dutyPercent > HEATER_MAX_DUTY_PERCENT) {
+        dutyPercent = HEATER_MAX_DUTY_PERCENT;
+    }
+
+    return (uint16_t) (dutyPercent * HEATER_PERMILLE_PER_PERCENT + 0.5f);
+}
+
 void Heater_Task_Disable(void)
 {
     bool stateChanged =
-        g_heaterEnabled || (Heater_GetDutyPermille() != 0U);
+        g_controlEnabled || (Heater_GetDutyPermille() != 0U);
 
     Heater_Off();
     if (g_pidReady) {
@@ -199,7 +228,7 @@ void Heater_Task_Disable(void)
         (void) PID_Reset(&g_holdPid, 0.0f);
     }
 
-    g_heaterEnabled = false;
+    g_controlEnabled = false;
     g_pidActive = false;
     g_activePid = &g_approachPid;
     g_pidMode = HEATER_PID_MODE_APPROACH;
@@ -220,8 +249,7 @@ static void Heater_Task_EnableAt(uint32_t nowMs)
         return;
     }
 
-    if (!TMP_Task_GetTemperatureC(&temperatureC) ||
-        (temperatureC >= HEATER_OVERTEMPERATURE_C)) {
+    if (!Heater_Task_ReadSafeTemperature(&temperatureC)) {
         Heater_Task_Disable();
         return;
     }
@@ -234,7 +262,7 @@ static void Heater_Task_EnableAt(uint32_t nowMs)
     g_pidMode = HEATER_PID_MODE_APPROACH;
     g_holdEntrySampleCount = 0U;
     g_lastPidCorrectionPercent = 0.0f;
-    g_heaterEnabled = true;
+    g_controlEnabled = true;
     g_reportPending = true;
     g_controlSamplePending = false;
     g_previousTemperatureC = temperatureC;
@@ -244,87 +272,104 @@ static void Heater_Task_EnableAt(uint32_t nowMs)
     g_lastControlMs = nowMs - HEATER_CONTROL_PERIOD_MS;
 }
 
-static void Heater_Task_UpdateControl(uint32_t nowMs)
+static bool Heater_Task_StartPid(float temperatureC)
 {
-    float temperatureC;
+    float currentError;
+    float initialCorrection;
+
+    currentError = HEATER_TARGET_TEMPERATURE_C - temperatureC;
+    initialCorrection = HEATER_APPROACH_PID_KP * currentError;
+    if (!PID_Prime(&g_approachPid, currentError, initialCorrection)) {
+        return false;
+    }
+
+    g_activePid = &g_approachPid;
+    g_pidMode = HEATER_PID_MODE_APPROACH;
+    g_holdEntrySampleCount = 0U;
+    g_lastPidCorrectionPercent = initialCorrection;
+    g_pidActive = true;
+    return true;
+}
+
+static bool Heater_Task_UpdateRapidHeat(uint32_t nowMs,
+    float temperatureC, bool *rapidHeatApplied)
+{
+    *rapidHeatApplied = false;
+
+    if (g_pidActive || !Heater_Task_ShouldRapidHeat(temperatureC)) {
+        return true;
+    }
+
+    if (!Heater_SetDutyPermille(HEATER_RAPID_HEAT_DUTY_PERMILLE)) {
+        return false;
+    }
+
+    Heater_Task_QueueControlSample(nowMs, HOST_LINK_HEATER_PHASE_RAPID,
+        temperatureC, 0.0f, HEATER_RAPID_HEAT_DUTY_PERMILLE);
+    *rapidHeatApplied = true;
+    return true;
+}
+
+static bool Heater_Task_UpdatePidHeat(uint32_t nowMs, float temperatureC)
+{
     float pidCorrection;
     float dutyPercent;
     float currentError;
-    float initialCorrection;
     uint16_t dutyPermille;
 
-    if (!g_heaterEnabled ||
-        ((uint32_t) (nowMs - g_lastControlMs) <
-            HEATER_CONTROL_PERIOD_MS)) {
+    if (!g_pidActive && !Heater_Task_StartPid(temperatureC)) {
+        return false;
+    }
+
+    currentError = HEATER_TARGET_TEMPERATURE_C - temperatureC;
+    if (!Heater_Task_UpdatePidMode(currentError)) {
+        return false;
+    }
+
+    if (!PID_Compute(g_activePid, HEATER_TARGET_TEMPERATURE_C,
+            temperatureC, &pidCorrection)) {
+        return false;
+    }
+    g_lastPidCorrectionPercent = pidCorrection;
+
+    dutyPercent = (float) HEATER_FEEDFORWARD_DUTY_PERCENT + pidCorrection;
+    dutyPermille = Heater_Task_DutyPercentToPermille(dutyPercent);
+    if (!Heater_SetDutyPermille(dutyPermille)) {
+        return false;
+    }
+
+    Heater_Task_QueueControlSample(nowMs, HOST_LINK_HEATER_PHASE_PID,
+        temperatureC, pidCorrection, dutyPermille);
+    return true;
+}
+
+static void Heater_Task_UpdateControl(uint32_t nowMs)
+{
+    bool rapidHeatApplied;
+    float temperatureC;
+
+    if (!Heater_Task_IsControlDue(nowMs)) {
         return;
     }
-    g_lastControlMs = nowMs;
 
-    if (!TMP_Task_GetTemperatureC(&temperatureC) ||
-        (temperatureC >= HEATER_OVERTEMPERATURE_C)) {
+    if (!Heater_Task_ReadSafeTemperature(&temperatureC)) {
         Heater_Task_Disable();
         return;
     }
     Heater_Task_UpdateTemperatureRate(temperatureC);
 
-    if (!g_pidActive) {
-        if (Heater_Task_ShouldRapidHeat(temperatureC)) {
-            if (!Heater_SetDutyPermille(
-                    HEATER_RAPID_HEAT_DUTY_PERMILLE)) {
-                Heater_Task_Disable();
-                return;
-            }
-            Heater_Task_QueueControlSample(nowMs,
-                HOST_LINK_HEATER_PHASE_RAPID, temperatureC, 0.0f,
-                HEATER_RAPID_HEAT_DUTY_PERMILLE);
-            return;
-        }
-
-        currentError = HEATER_TARGET_TEMPERATURE_C - temperatureC;
-        initialCorrection = HEATER_APPROACH_PID_KP * currentError;
-        if (!PID_Prime(
-                &g_approachPid, currentError, initialCorrection)) {
-            Heater_Task_Disable();
-            return;
-        }
-        g_activePid = &g_approachPid;
-        g_pidMode = HEATER_PID_MODE_APPROACH;
-        g_holdEntrySampleCount = 0U;
-        g_lastPidCorrectionPercent = initialCorrection;
-        g_pidActive = true;
-    }
-
-    currentError = HEATER_TARGET_TEMPERATURE_C - temperatureC;
-    if (!Heater_Task_UpdatePidMode(currentError)) {
+    if (!Heater_Task_UpdateRapidHeat(
+            nowMs, temperatureC, &rapidHeatApplied)) {
         Heater_Task_Disable();
         return;
     }
-
-    if (!PID_Compute(g_activePid, HEATER_TARGET_TEMPERATURE_C,
-            temperatureC, &pidCorrection)) {
-        Heater_Task_Disable();
+    if (rapidHeatApplied) {
         return;
     }
-    g_lastPidCorrectionPercent = pidCorrection;
 
-    dutyPercent = (float) HEATER_FEEDFORWARD_DUTY_PERCENT + pidCorrection;
-    if (dutyPercent < 0.0f) {
-        dutyPercent = 0.0f;
-    } else if (dutyPercent > HEATER_MAX_DUTY_PERCENT) {
-        dutyPercent = HEATER_MAX_DUTY_PERCENT;
-    }
-
-    dutyPermille =
-        (uint16_t) (dutyPercent * HEATER_PERMILLE_PER_PERCENT + 0.5f);
-    if (dutyPermille > HEATER_MAX_DUTY_PERMILLE) {
-        dutyPermille = HEATER_MAX_DUTY_PERMILLE;
-    }
-    if (!Heater_SetDutyPermille(dutyPermille)) {
+    if (!Heater_Task_UpdatePidHeat(nowMs, temperatureC)) {
         Heater_Task_Disable();
-        return;
     }
-    Heater_Task_QueueControlSample(nowMs, HOST_LINK_HEATER_PHASE_PID,
-        temperatureC, pidCorrection, dutyPermille);
 }
 
 void Heater_Task_Init(void)
@@ -356,7 +401,7 @@ void Heater_Task_Init(void)
     g_pidMode = HEATER_PID_MODE_APPROACH;
     g_holdEntrySampleCount = 0U;
     g_lastPidCorrectionPercent = 0.0f;
-    g_heaterEnabled = false;
+    g_controlEnabled = false;
     g_reportPending = true;
     g_controlSamplePending = false;
     g_previousTemperatureC = 0.0f;
@@ -386,7 +431,7 @@ void Heater_Task_Run(void)
     }
 
     if (HostLink_SendHeaterState(
-            g_heaterEnabled, Heater_GetDutyPermille())) {
+            g_controlEnabled, Heater_GetDutyPermille())) {
         g_reportPending = false;
         g_lastReportMs = nowMs;
     }
@@ -394,7 +439,7 @@ void Heater_Task_Run(void)
 
 bool Heater_Task_IsEnabled(void)
 {
-    return g_heaterEnabled;
+    return g_controlEnabled;
 }
 
 void Heater_Task_Enable(void)
@@ -404,13 +449,8 @@ void Heater_Task_Enable(void)
 
 bool Heater_Task_IsStable(void)
 {
-    return g_heaterEnabled && g_pidActive &&
+    return g_controlEnabled && g_pidActive &&
         (g_pidMode == HEATER_PID_MODE_HOLD);
-}
-
-uint8_t Heater_Task_GetDutyPercent(void)
-{
-    return Heater_GetDutyPercent();
 }
 
 uint16_t Heater_Task_GetDutyPermille(void)

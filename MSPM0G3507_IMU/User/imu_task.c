@@ -36,6 +36,11 @@
 #define IMU_TASK_STATIC_HOLD_EXIT_RATE_DPS (0.12f)
 #define IMU_TASK_STATIC_HOLD_EXIT_MEAN_ABS_DPS \
     (0.06f)
+#define IMU_TASK_STATIC_BIAS_ADAPT_DELAY_MS     (5000U)
+#define IMU_TASK_STATIC_BIAS_ADAPT_ALPHA        (0.005f)
+#define IMU_TASK_STATIC_BIAS_ADAPT_MAX_STEP_DPS (0.0005f)
+#define IMU_TASK_STATIC_BIAS_ADAPT_MAX_TOTAL_DPS \
+    (0.02f)
 #define IMU_TASK_MILLI_SCALE (1000.0f)
 #define IMU_TASK_PPM_SCALE   (1000000.0f)
 
@@ -61,7 +66,10 @@ typedef struct {
     float sumRateDps2;
     float sumAbsRateDps;
     float maxAbsRateDps;
+    uint32_t biasAdaptStartMs;
+    float biasAdaptBaseRaw24;
     bool holding;
+    bool biasAdaptActive;
 } IMU_Task_StaticHold;
 #endif
 
@@ -103,6 +111,19 @@ static IMU_Task_StaticHold g_staticHold;
 static float IMU_Task_AbsFloat(float value)
 {
     return (value >= 0.0f) ? value : -value;
+}
+
+static float IMU_Task_ClampFloat(float value, float minValue,
+                                 float maxValue)
+{
+    if (value < minValue) {
+        return minValue;
+    }
+    if (value > maxValue) {
+        return maxValue;
+    }
+
+    return value;
 }
 
 static int32_t IMU_Task_RoundScaled(float value, float scale)
@@ -183,10 +204,84 @@ static void IMU_Task_ResetStaticHoldWindow(uint32_t nowMs)
     g_staticHold.maxAbsRateDps = 0.0f;
 }
 
+static void IMU_Task_ResetStaticBiasAdapt(void)
+{
+    g_staticHold.biasAdaptStartMs   = 0U;
+    g_staticHold.biasAdaptBaseRaw24 = g_biasRaw24;
+    g_staticHold.biasAdaptActive    = false;
+}
+
+static void IMU_Task_PauseStaticBiasAdapt(void)
+{
+    g_staticHold.biasAdaptStartMs = 0U;
+    g_staticHold.biasAdaptActive  = false;
+}
+
+static void IMU_Task_StartStaticBiasAdapt(uint32_t nowMs)
+{
+    g_staticHold.biasAdaptStartMs   = nowMs;
+    g_staticHold.biasAdaptActive    = true;
+}
+
+static float IMU_Task_RateDpsToBiasRaw24(float rateDps)
+{
+    float scaleCorrection = g_scaleCorrection;
+
+    if (!IMU_Task_IsScaleCorrectionValid(scaleCorrection)) {
+        scaleCorrection = 1.0f;
+    }
+
+    return (rateDps * XV7021_ANGULAR_RATE_24BIT_LSB_PER_DPS) /
+           scaleCorrection;
+}
+
+static void IMU_Task_UpdateStaticBiasAdapt(uint32_t nowMs,
+                                           float meanRateDps)
+{
+    float stepRaw24;
+    float maxStepRaw24;
+    float maxTotalRaw24;
+    float currentDeltaRaw24;
+
+    if (!g_staticHold.biasAdaptActive) {
+        IMU_Task_StartStaticBiasAdapt(nowMs);
+        return;
+    }
+
+    if ((uint32_t)(nowMs - g_staticHold.biasAdaptStartMs) <
+        IMU_TASK_STATIC_BIAS_ADAPT_DELAY_MS) {
+        return;
+    }
+
+    stepRaw24 = IMU_Task_RateDpsToBiasRaw24(meanRateDps) *
+                IMU_TASK_STATIC_BIAS_ADAPT_ALPHA;
+    maxStepRaw24 = IMU_Task_AbsFloat(IMU_Task_RateDpsToBiasRaw24(
+        IMU_TASK_STATIC_BIAS_ADAPT_MAX_STEP_DPS));
+    maxTotalRaw24 = IMU_Task_AbsFloat(IMU_Task_RateDpsToBiasRaw24(
+        IMU_TASK_STATIC_BIAS_ADAPT_MAX_TOTAL_DPS));
+
+    stepRaw24 = IMU_Task_ClampFloat(stepRaw24, -maxStepRaw24,
+                                    maxStepRaw24);
+    currentDeltaRaw24 = (g_biasRaw24 - g_staticHold.biasAdaptBaseRaw24) +
+                        stepRaw24;
+    currentDeltaRaw24 = IMU_Task_ClampFloat(
+        currentDeltaRaw24, -maxTotalRaw24, maxTotalRaw24);
+
+    g_biasRaw24 = g_staticHold.biasAdaptBaseRaw24 + currentDeltaRaw24;
+}
+
 static void IMU_Task_ResetStaticHold(uint32_t nowMs)
 {
     g_staticHold.holding = false;
+    IMU_Task_ResetStaticBiasAdapt();
     IMU_Task_ResetStaticHoldWindow(nowMs);
+}
+
+static void IMU_Task_EnterStaticHold(uint32_t nowMs)
+{
+    g_staticHold.holding            = true;
+    g_staticHold.biasAdaptBaseRaw24 = g_biasRaw24;
+    IMU_Task_StartStaticBiasAdapt(nowMs);
 }
 
 static void IMU_Task_UpdateStaticHoldWindow(float rateDps)
@@ -209,6 +304,7 @@ static float IMU_Task_ApplyStaticHold(uint32_t nowMs, float rateDps)
     if (g_staticHold.holding &&
         (absRateDps > IMU_TASK_STATIC_HOLD_EXIT_RATE_DPS)) {
         g_staticHold.holding = false;
+        IMU_Task_ResetStaticBiasAdapt();
         IMU_Task_ResetStaticHoldWindow(nowMs);
     }
 
@@ -219,6 +315,7 @@ static float IMU_Task_ApplyStaticHold(uint32_t nowMs, float rateDps)
         float count          = (float)g_staticHold.count;
         float meanRateDps    = g_staticHold.sumRateDps / count;
         float meanAbsRateDps = g_staticHold.sumAbsRateDps / count;
+        bool stableWindow;
         float varianceDps2 =
             (g_staticHold.sumRateDps2 / count) -
             (meanRateDps * meanRateDps);
@@ -227,18 +324,24 @@ static float IMU_Task_ApplyStaticHold(uint32_t nowMs, float rateDps)
             varianceDps2 = 0.0f;
         }
 
+        stableWindow =
+            (meanAbsRateDps < IMU_TASK_STATIC_HOLD_ENTER_MEAN_ABS_DPS) &&
+            (varianceDps2 < IMU_TASK_STATIC_HOLD_ENTER_VARIANCE_DPS2) &&
+            (g_staticHold.maxAbsRateDps <
+             IMU_TASK_STATIC_HOLD_ENTER_MAX_ABS_DPS);
+
         if (g_staticHold.holding) {
             if (meanAbsRateDps >
                 IMU_TASK_STATIC_HOLD_EXIT_MEAN_ABS_DPS) {
                 g_staticHold.holding = false;
+                IMU_Task_ResetStaticBiasAdapt();
+            } else if (stableWindow) {
+                IMU_Task_UpdateStaticBiasAdapt(nowMs, meanRateDps);
+            } else {
+                IMU_Task_PauseStaticBiasAdapt();
             }
-        } else if ((meanAbsRateDps <
-                    IMU_TASK_STATIC_HOLD_ENTER_MEAN_ABS_DPS) &&
-                   (varianceDps2 <
-                    IMU_TASK_STATIC_HOLD_ENTER_VARIANCE_DPS2) &&
-                   (g_staticHold.maxAbsRateDps <
-                    IMU_TASK_STATIC_HOLD_ENTER_MAX_ABS_DPS)) {
-            g_staticHold.holding = true;
+        } else if (stableWindow) {
+            IMU_Task_EnterStaticHold(nowMs);
         }
 
         IMU_Task_ResetStaticHoldWindow(nowMs);

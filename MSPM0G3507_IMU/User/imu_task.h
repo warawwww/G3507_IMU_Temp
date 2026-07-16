@@ -10,7 +10,7 @@ typedef enum {
     IMU_TASK_STATE_NOT_INITIALIZED = 0,
     IMU_TASK_STATE_READY,
     IMU_TASK_STATE_ZERO_CALIBRATING,
-    IMU_TASK_STATE_360_CALIBRATING,
+    IMU_TASK_STATE_ROTATION_CALIBRATING,
     IMU_TASK_STATE_ERROR,
 } IMU_Task_State;
 
@@ -48,8 +48,9 @@ XV7021_Status IMU_Task_GetSensorStatus(void);
 IMU_Task_CalibrationResult IMU_Task_GetCalibrationResult(void);
 
 bool IMU_Task_StartZeroCalibration(uint32_t durationMs);
-bool IMU_Task_Start360Calibration(uint16_t turns, bool clockwise);
-void IMU_Task_ResetAngle(void);
+bool IMU_Task_RunHardwareZeroCalibration(void);
+bool IMU_Task_StartRotationCalibration(uint16_t turns, bool clockwise);
+bool IMU_Task_ResetAngle(void);
 bool IMU_Task_IsCalibrationBusy(void);
 
 #endif

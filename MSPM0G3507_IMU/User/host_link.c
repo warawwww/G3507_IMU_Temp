@@ -12,7 +12,9 @@
 
 static bool g_reportingEnabled;
 static bool g_zeroCalibrationRequested;
-static bool g_360CalibrationRequested;
+static bool g_autoCRequested;
+static bool g_rotationCalibrationRequested;
+static bool g_angleResetRequested;
 static uint32_t g_lastHostMessageMs;
 static char g_rxLine[HOST_LINK_RX_LINE_CAPACITY];
 static size_t g_rxLineLength;
@@ -64,11 +66,23 @@ static void HostLink_ProcessCommand(const char *line)
         g_zeroCalibrationRequested = true;
         g_lastHostMessageMs = nowMs;
         (void) HostLink_WriteRawString("HOST,OK,IMU_ZERO\r\n");
-    } else if ((strcmp(line, "IMU_CAL360") == 0) ||
-        (strcmp(line, "CAL360") == 0)) {
-        g_360CalibrationRequested = true;
+    } else if ((strcmp(line, "IMU_AUTOC") == 0) ||
+        (strcmp(line, "AUTOC") == 0)) {
+        g_autoCRequested = true;
         g_lastHostMessageMs = nowMs;
-        (void) HostLink_WriteRawString("HOST,OK,IMU_CAL360\r\n");
+        (void) HostLink_WriteRawString("HOST,OK,IMU_AUTOC\r\n");
+    } else if ((strcmp(line, "IMU_CAL1080") == 0) ||
+        (strcmp(line, "CAL1080") == 0) ||
+        (strcmp(line, "IMU_CAL360") == 0) ||
+        (strcmp(line, "CAL360") == 0)) {
+        g_rotationCalibrationRequested = true;
+        g_lastHostMessageMs = nowMs;
+        (void) HostLink_WriteRawString("HOST,OK,IMU_CAL1080\r\n");
+    } else if ((strcmp(line, "IMU_ANGLE_ZERO") == 0) ||
+        (strcmp(line, "ANGLE_ZERO") == 0)) {
+        g_angleResetRequested = true;
+        g_lastHostMessageMs = nowMs;
+        (void) HostLink_WriteRawString("HOST,OK,IMU_ANGLE_ZERO\r\n");
     } else {
         (void) HostLink_WriteRawString("HOST,ERR,CMD\r\n");
     }
@@ -351,7 +365,9 @@ void HostLink_Init(void)
 {
     g_reportingEnabled = false;
     g_zeroCalibrationRequested = false;
-    g_360CalibrationRequested = false;
+    g_autoCRequested = false;
+    g_rotationCalibrationRequested = false;
+    g_angleResetRequested = false;
     g_lastHostMessageMs = BSP_GetTickMs();
     g_rxLineLength = 0U;
     BSP_UART_FlushRx(BSP_UART_PORT_TYPEC);
@@ -386,10 +402,26 @@ bool HostLink_TakeZeroCalibrationRequest(void)
     return requested;
 }
 
-bool HostLink_Take360CalibrationRequest(void)
+bool HostLink_TakeAutoCRequest(void)
 {
-    bool requested = g_360CalibrationRequested;
+    bool requested = g_autoCRequested;
 
-    g_360CalibrationRequested = false;
+    g_autoCRequested = false;
+    return requested;
+}
+
+bool HostLink_TakeRotationCalibrationRequest(void)
+{
+    bool requested = g_rotationCalibrationRequested;
+
+    g_rotationCalibrationRequested = false;
+    return requested;
+}
+
+bool HostLink_TakeAngleResetRequest(void)
+{
+    bool requested = g_angleResetRequested;
+
+    g_angleResetRequested = false;
     return requested;
 }

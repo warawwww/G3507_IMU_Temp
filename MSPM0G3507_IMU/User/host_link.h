@@ -30,8 +30,11 @@
  *   START / HELLO / ON  enable continuous reporting
  *   STOP / OFF          disable continuous reporting
  *   PING                keep reporting alive before timeout
- *   IMU_ZERO / ZERO     request the same zero-drift calibration as short key
- *   IMU_CAL360 / CAL360 request the same 360 degree calibration as long key
+ *   IMU_ZERO / ZERO       request the same zero-drift calibration as short key
+ *   IMU_AUTOC / AUTOC     request XV7021BB internal AutoC zero-rate command
+ *   IMU_CAL1080 / CAL1080 request the same 1080 degree calibration as long key
+ *   IMU_CAL360 / CAL360   legacy alias for IMU_CAL1080
+ *   IMU_ANGLE_ZERO / ANGLE_ZERO reset integrated IMU angle to 0
  */
 typedef enum {
     HOST_LINK_HEATER_PHASE_RAPID = 1,
@@ -66,7 +69,9 @@ void HostLink_Init(void);
 void HostLink_Run(void);
 bool HostLink_IsReportingEnabled(void);
 bool HostLink_TakeZeroCalibrationRequest(void);
-bool HostLink_Take360CalibrationRequest(void);
+bool HostLink_TakeAutoCRequest(void);
+bool HostLink_TakeRotationCalibrationRequest(void);
+bool HostLink_TakeAngleResetRequest(void);
 
 bool HostLink_SendTMP117TemperatureRaw(int16_t rawTemperature);
 bool HostLink_SendTMP117Error(TMP117_Status status);

@@ -12,14 +12,14 @@
 #define IMU_TASK_TEMPERATURE_PERIOD_MS      (50U)
 #define IMU_TASK_REPORT_PERIOD_MS           (10U)
 #define IMU_TASK_ZERO_CAL_SETTLE_MS         (1000U)
-#define IMU_TASK_DEFAULT_ZERO_CAL_MS        (20000U)
+#define IMU_TASK_DEFAULT_ZERO_CAL_MS        (10000U)
 #define IMU_TASK_MIN_ZERO_CAL_MS            (500U)
 #define IMU_TASK_MAX_ZERO_CAL_MS            (30000U)
 #define IMU_TASK_STATIC_MIN_SAMPLES         (64U)
 #define IMU_TASK_STATIC_MAX_ABS_DPS         (5.0f)
 #define IMU_TASK_STATIC_VARIANCE_LIMIT_DPS2 (0.25f)
 #define IMU_TASK_ROTATION_STATIC_MS         (1000U)
-#define IMU_TASK_ROTATION_TIMEOUT_MS        (30000U)
+#define IMU_TASK_ROTATION_TIMEOUT_MS        (60000U)
 #define IMU_TASK_ROTATION_STILL_RATE_DPS    (2.0f)
 #define IMU_TASK_ROTATION_START_RATE_DPS    (5.0f)
 #define IMU_TASK_ROTATION_MIN_TARGET_RATIO  (0.80f)
@@ -453,7 +453,7 @@ static void IMU_Task_StartRotationCalibrationAt(
     g_phaseStartMs              = nowMs;
     IMU_Task_ResetStaticHold(nowMs);
     g_rotationPhase = IMU_TASK_ROTATION_PHASE_PRE_STATIC;
-    g_state         = IMU_TASK_STATE_360_CALIBRATING;
+    g_state         = IMU_TASK_STATE_ROTATION_CALIBRATING;
     g_sample.state  = g_state;
     IMU_Task_ResetStats();
     IMU_Task_SetCalibrationResult(IMU_TASK_CAL_RESULT_BUSY);
@@ -685,7 +685,7 @@ static void IMU_Task_ReadSample(uint32_t nowMs)
     if (g_state == IMU_TASK_STATE_ZERO_CALIBRATING) {
         IMU_Task_ProcessZeroCalibration(
             nowMs, rawAngularRate24, rawDps);
-    } else if (g_state == IMU_TASK_STATE_360_CALIBRATING) {
+    } else if (g_state == IMU_TASK_STATE_ROTATION_CALIBRATING) {
         IMU_Task_ProcessRotationCalibration(
             nowMs, sampleUs, rawAngularRate24, rawDps);
     }
@@ -848,7 +848,25 @@ bool IMU_Task_StartZeroCalibration(uint32_t durationMs)
     return true;
 }
 
-bool IMU_Task_Start360Calibration(uint16_t turns, bool clockwise)
+bool IMU_Task_RunHardwareZeroCalibration(void)
+{
+    XV7021_Status status;
+
+    if ((g_sensorStatus != XV7021_STATUS_OK) || IMU_Task_IsCalibrationBusy()) {
+        return false;
+    }
+
+    status = XV7021_CalibrateZeroRate();
+    if (status != XV7021_STATUS_OK) {
+        IMU_Task_SetError(status);
+        return false;
+    }
+
+    IMU_Task_ResetIntegration(BSP_GetTickMs());
+    return true;
+}
+
+bool IMU_Task_StartRotationCalibration(uint16_t turns, bool clockwise)
 {
     uint32_t nowMs = BSP_GetTickMs();
 
@@ -872,13 +890,18 @@ bool IMU_Task_Start360Calibration(uint16_t turns, bool clockwise)
     return true;
 }
 
-void IMU_Task_ResetAngle(void)
+bool IMU_Task_ResetAngle(void)
 {
+    if ((g_sensorStatus != XV7021_STATUS_OK) || IMU_Task_IsCalibrationBusy()) {
+        return false;
+    }
+
     IMU_Task_ResetIntegration(BSP_GetTickMs());
+    return true;
 }
 
 bool IMU_Task_IsCalibrationBusy(void)
 {
     return (g_state == IMU_TASK_STATE_ZERO_CALIBRATING) ||
-           (g_state == IMU_TASK_STATE_360_CALIBRATING);
+           (g_state == IMU_TASK_STATE_ROTATION_CALIBRATING);
 }

@@ -453,7 +453,7 @@
         <div class="meta">
           <div>当前占空比：<span id="heaterDuty">-- %</span></div>
           <div>控制采样：<span id="sampleCount">0</span></div>
-          <div>实体按键：<span>短按零飘 · 长按 360° 标定</span></div>
+          <div>实体按键：<span>短按零飘 · 长按 1080° 标定</span></div>
           <div>更新时间：<span id="heaterUpdateTime">--</span></div>
         </div>
       </article>
@@ -523,8 +523,10 @@
           <div>
             <div class="label">上位机触发</div>
             <div class="imu-actions">
-              <button id="zeroCalButton" disabled>零飘标定 20s</button>
-              <button id="rotationCalButton" class="warn" disabled>360° 标定</button>
+              <button id="angleZeroButton" disabled>角度归零</button>
+              <button id="autoCButton" disabled>AutoC 零速率</button>
+              <button id="zeroCalButton" disabled>零飘标定 10s</button>
+              <button id="rotationCalButton" class="warn" disabled>1080° 标定</button>
             </div>
           </div>
         </div>
@@ -575,14 +577,14 @@
       1: '温控稳定',
       2: '零飘标定',
       3: '陀螺仪稳定发送',
-      4: '360 度标定'
+      4: '1080 度标定'
     };
 
     const IMU_STATES = {
       0: '未初始化',
       1: '就绪',
       2: '零飘标定中',
-      3: '360 度标定中',
+      3: '1080 度标定中',
       4: '错误'
     };
 
@@ -602,6 +604,8 @@
     const reportButton = document.querySelector('#reportButton');
     const clearDataButton = document.querySelector('#clearDataButton');
     const saveCsvButton = document.querySelector('#saveCsvButton');
+    const angleZeroButton = document.querySelector('#angleZeroButton');
+    const autoCButton = document.querySelector('#autoCButton');
     const zeroCalButton = document.querySelector('#zeroCalButton');
     const rotationCalButton = document.querySelector('#rotationCalButton');
     const temperatureElement = document.querySelector('#temperature');
@@ -667,6 +671,8 @@
     }
 
     function setCommandButtonsEnabled(enabled) {
+      angleZeroButton.disabled = !enabled;
+      autoCButton.disabled = !enabled;
       zeroCalButton.disabled = !enabled;
       rotationCalButton.disabled = !enabled;
     }
@@ -741,9 +747,19 @@
       } else if (fields[1] === 'OK' && fields[2] === 'IMU_ZERO') {
         imuCalibrationElement.textContent = '已请求零飘标定';
         setStatus('已请求零飘标定', 'online');
-      } else if (fields[1] === 'OK' && fields[2] === 'IMU_CAL360') {
-        imuCalibrationElement.textContent = '已请求 360° 标定';
-        setStatus('已请求 360° 标定', 'online');
+      } else if (fields[1] === 'OK' && fields[2] === 'IMU_AUTOC') {
+        imuCalibrationElement.textContent = '已请求 AutoC 零速率校准';
+        setStatus('已请求 AutoC 零速率校准', 'online');
+      } else if (fields[1] === 'OK' &&
+          (fields[2] === 'IMU_CAL1080' || fields[2] === 'IMU_CAL360')) {
+        imuCalibrationElement.textContent = '已请求 1080° 标定';
+        setStatus('已请求 1080° 标定', 'online');
+      } else if (fields[1] === 'OK' && fields[2] === 'IMU_ANGLE_ZERO') {
+        imuCalibrationElement.textContent = '已请求角度归零';
+        imuAngleElement.textContent = '+0.000';
+        headingAngleElement.textContent = '+0.0';
+        updateOrientation(0);
+        setStatus('已请求角度归零', 'online');
       } else if (fields[1] === 'PONG') {
         setReportControl(fields[2] === '1');
       } else if (fields[1] === 'ERR') {
@@ -1324,11 +1340,17 @@
       reportButton.addEventListener('click', () => {
         void requestReporting(!reportingRequested);
       });
+      angleZeroButton.addEventListener('click', () => {
+        void requestIMUCalibration('IMU_ANGLE_ZERO', '已请求角度归零');
+      });
+      autoCButton.addEventListener('click', () => {
+        void requestIMUCalibration('IMU_AUTOC', '已请求 AutoC 零速率校准');
+      });
       zeroCalButton.addEventListener('click', () => {
         void requestIMUCalibration('IMU_ZERO', '已请求零飘标定');
       });
       rotationCalButton.addEventListener('click', () => {
-        void requestIMUCalibration('IMU_CAL360', '已请求 360° 标定');
+        void requestIMUCalibration('IMU_CAL1080', '已请求 1080° 标定');
       });
       navigator.serial.addEventListener('disconnect', event => {
         if (event.target === port) void disconnectSerial();

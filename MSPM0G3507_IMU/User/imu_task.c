@@ -7,7 +7,7 @@
 #include "host_link.h"
 #include "imu_cal_storage.h"
 
-#define IMU_TASK_SAMPLE_PERIOD_US           (500U)
+#define IMU_TASK_SAMPLE_PERIOD_US           (200U)
 #define IMU_TASK_RETRY_PERIOD_MS            (1000U)
 #define IMU_TASK_TEMPERATURE_PERIOD_MS      (50U)
 #define IMU_TASK_REPORT_PERIOD_MS           (10U)

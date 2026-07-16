@@ -427,6 +427,7 @@
         <button id="connectButton" class="primary">连接串口</button>
         <button id="disconnectButton" disabled>断开</button>
         <button id="reportButton" disabled>暂停上报</button>
+        <button id="recordToggleButton">暂停记录</button>
         <button id="clearDataButton">清空记录</button>
         <button id="saveCsvButton" disabled>保存 CSV</button>
       </div>
@@ -559,6 +560,7 @@
     const BAUD_RATE = 115200;
     const HOST_HEARTBEAT_PERIOD_MS = 1000;
     const HISTORY_LIMIT = 240;
+    const LIVE_CONTROL_RECORD_LIMIT = 5000;
     const CONTROL_RECORD_LIMIT = 250000;
     const IMU_RECORD_LIMIT = 250000;
     const LOG_LIMIT = 100;
@@ -602,6 +604,7 @@
     const connectButton = document.querySelector('#connectButton');
     const disconnectButton = document.querySelector('#disconnectButton');
     const reportButton = document.querySelector('#reportButton');
+    const recordToggleButton = document.querySelector('#recordToggleButton');
     const clearDataButton = document.querySelector('#clearDataButton');
     const saveCsvButton = document.querySelector('#saveCsvButton');
     const angleZeroButton = document.querySelector('#angleZeroButton');
@@ -642,7 +645,9 @@
     let keepReading = false;
     let receiveBuffer = '';
     let frameCount = 0;
+    let recordingEnabled = true;
     const history = [];
+    const liveControlRecords = [];
     const controlRecords = [];
     const imuRecords = [];
     const logLines = [];
@@ -664,10 +669,29 @@
       saveCsvButton.disabled = controlRecords.length === 0 && imuRecords.length === 0;
     }
 
+    function updateRecordToggleButton() {
+      recordToggleButton.textContent = recordingEnabled ? '暂停记录' : '开始记录';
+      recordToggleButton.classList.toggle('warn', !recordingEnabled);
+    }
+
+    function updateRecordCountDisplay() {
+      sampleCountElement.textContent = recordingEnabled
+        ? String(controlRecords.length)
+        : `${controlRecords.length}（暂停）`;
+    }
+
     function trimRecordBuffer(records, limit) {
       if (records.length > limit) {
         records.splice(0, Math.max(1, records.length - limit));
       }
+    }
+
+    function recordIMUData(record) {
+      if (!recordingEnabled) return;
+
+      imuRecords.push(record);
+      trimRecordBuffer(imuRecords, IMU_RECORD_LIMIT);
+      updateSaveCsvButton();
     }
 
     function setCommandButtonsEnabled(enabled) {
@@ -832,7 +856,7 @@
         imuSampleCountElement.textContent = String(sampleCount);
         imuUpdateTime.textContent = new Date().toLocaleTimeString();
         updateOrientation(angleDeg);
-        imuRecords.push({
+        recordIMUData({
           type: 'imu_sample',
           receivedAt: new Date(now).toISOString(),
           time: now,
@@ -847,8 +871,6 @@
           scale: scalePpm / 1000000,
           sampleCount
         });
-        trimRecordBuffer(imuRecords, IMU_RECORD_LIMIT);
-        updateSaveCsvButton();
         setStatus(`IMU 数据接收正常（${deviceTimeMs} ms）`, 'online');
         return true;
       }
@@ -865,7 +887,7 @@
         imuCalibrationElement.textContent =
           `${labelFor(IMU_CAL_RESULTS, result)} · ${(angleMilliDeg / 1000).toFixed(3)} deg · ${(scalePpm / 1000000).toFixed(6)}`;
         imuUpdateTime.textContent = new Date().toLocaleTimeString();
-        imuRecords.push({
+        recordIMUData({
           type: 'imu_calibration',
           receivedAt: new Date().toISOString(),
           time: Date.now(),
@@ -876,8 +898,6 @@
           calAngleDeg: angleMilliDeg / 1000,
           calScale: scalePpm / 1000000
         });
-        trimRecordBuffer(imuRecords, IMU_RECORD_LIMIT);
-        updateSaveCsvButton();
         if (result >= 4) {
           setStatus(`IMU 标定异常：${labelFor(IMU_CAL_RESULTS, result)}`, 'error');
         }
@@ -889,14 +909,12 @@
         imuCalibrationElement.textContent = `传感器错误 ${fields[2]}`;
         imuStateElement.textContent = '错误';
         imuUpdateTime.textContent = new Date().toLocaleTimeString();
-        imuRecords.push({
+        recordIMUData({
           type: 'imu_error',
           receivedAt: new Date().toISOString(),
           time: Date.now(),
           errorStatus: Number(fields[2])
         });
-        trimRecordBuffer(imuRecords, IMU_RECORD_LIMIT);
-        updateSaveCsvButton();
         setStatus(`IMU 传感器错误 ${fields[2]}`, 'error');
         return true;
       }
@@ -954,7 +972,7 @@
           const temperature = temperatureMilliC / 1000;
           const target = targetMilliC / 1000;
           const duty = dutyPermille / 10;
-          controlRecords.push({
+          const record = {
             receivedAt: new Date(now).toISOString(),
             time: now,
             deviceTimeMs,
@@ -968,12 +986,18 @@
             kp: kpMilli / 1000,
             ki: kiMilli / 1000,
             kd: kdMilli / 1000
-          });
-          if (controlRecords.length > CONTROL_RECORD_LIMIT) {
-            controlRecords.splice(0, 10000);
+          };
+
+          liveControlRecords.push(record);
+          trimRecordBuffer(liveControlRecords, LIVE_CONTROL_RECORD_LIMIT);
+          if (recordingEnabled) {
+            controlRecords.push(record);
+            if (controlRecords.length > CONTROL_RECORD_LIMIT) {
+              controlRecords.splice(0, 10000);
+            }
+            updateSaveCsvButton();
           }
-          sampleCountElement.textContent = String(controlRecords.length);
-          updateSaveCsvButton();
+          updateRecordCountDisplay();
           temperatureElement.textContent = temperature.toFixed(3);
           updateTime.textContent = new Date(now).toLocaleTimeString();
           setStatus('控制数据接收正常', 'online');
@@ -1056,8 +1080,8 @@
       context.font = '11px Segoe UI, sans-serif';
       context.lineWidth = 1;
 
-      const useControlData = controlRecords.length > 0;
-      const source = useControlData ? controlRecords : history;
+      const useControlData = liveControlRecords.length > 0;
+      const source = useControlData ? liveControlRecords : history;
       const endTime = source.length ? source[source.length - 1].time : Date.now();
       const startTime = endTime - 30000;
       const visible = source.filter(point => point.time >= startTime);
@@ -1120,12 +1144,20 @@
 
     function clearControlData() {
       history.length = 0;
+      liveControlRecords.length = 0;
       controlRecords.length = 0;
       imuRecords.length = 0;
-      sampleCountElement.textContent = '0';
+      updateRecordCountDisplay();
       updateSaveCsvButton();
       drawChart();
       appendLog('温控和 IMU 记录已清空');
+    }
+
+    function toggleRecording() {
+      recordingEnabled = !recordingEnabled;
+      updateRecordToggleButton();
+      updateRecordCountDisplay();
+      appendLog(recordingEnabled ? 'CSV 记录已开启' : 'CSV 记录已暂停');
     }
 
     function saveControlDataCsv() {
@@ -1358,9 +1390,12 @@
     }
 
     clearDataButton.addEventListener('click', clearControlData);
+    recordToggleButton.addEventListener('click', toggleRecording);
     saveCsvButton.addEventListener('click', saveControlDataCsv);
 
     window.addEventListener('resize', drawChart);
+    updateRecordToggleButton();
+    updateRecordCountDisplay();
     updateOrientation(0);
     drawChart();
   </script>

@@ -5,7 +5,7 @@
  * Set to 1 to enable the ready-state IMU static zero-hold/deadband logic.
  * Set to 0 to integrate the calibrated gyro rate directly.
  */
-#define APP_ENABLE_IMU_STATIC_HOLD (0)
+#define APP_ENABLE_IMU_STATIC_HOLD (1)
 
 /*
  * Set to 1 to enable closed-loop heater startup/control.

@@ -2,6 +2,7 @@
 
 #include <stddef.h>
 
+#include "app_config.h"
 #include "bsp.h"
 #include "host_link.h"
 #include "imu_cal_storage.h"
@@ -52,6 +53,7 @@ typedef struct {
     float maxAbsDps;
 } IMU_Task_Stats;
 
+#if APP_ENABLE_IMU_STATIC_HOLD
 typedef struct {
     uint32_t startMs;
     uint32_t count;
@@ -61,6 +63,7 @@ typedef struct {
     float maxAbsRateDps;
     bool holding;
 } IMU_Task_StaticHold;
+#endif
 
 static IMU_Task_State g_state;
 static IMU_Task_CalibrationResult g_calibrationResult;
@@ -93,7 +96,9 @@ static bool g_rotationSaturated;
 static uint32_t g_rotationLastUs;
 static IMU_Task_RotationPhase g_rotationPhase;
 static IMU_Task_Stats g_stats;
+#if APP_ENABLE_IMU_STATIC_HOLD
 static IMU_Task_StaticHold g_staticHold;
+#endif
 
 static float IMU_Task_AbsFloat(float value)
 {
@@ -167,6 +172,7 @@ static void IMU_Task_ResetStats(void)
     g_stats.maxAbsDps = 0.0f;
 }
 
+#if APP_ENABLE_IMU_STATIC_HOLD
 static void IMU_Task_ResetStaticHoldWindow(uint32_t nowMs)
 {
     g_staticHold.startMs       = nowMs;
@@ -240,6 +246,12 @@ static float IMU_Task_ApplyStaticHold(uint32_t nowMs, float rateDps)
 
     return g_staticHold.holding ? 0.0f : rateDps;
 }
+#else
+static void IMU_Task_ResetStaticHold(uint32_t nowMs)
+{
+    (void)nowMs;
+}
+#endif
 
 static void IMU_Task_UpdateStats(int32_t rawAngularRate24, float rawDps)
 {
@@ -650,12 +662,14 @@ static void IMU_Task_ReadSample(uint32_t nowMs)
                            (float)rawAngularRate24 - g_biasRaw24) *
                        g_scaleCorrection;
     rateForIntegralDps = correctedRateDps;
+#if APP_ENABLE_IMU_STATIC_HOLD
     if (g_state == IMU_TASK_STATE_READY) {
         rateForIntegralDps =
             IMU_Task_ApplyStaticHold(nowMs, correctedRateDps);
     } else {
         IMU_Task_ResetStaticHold(nowMs);
     }
+#endif
 
     IMU_Task_UpdateIntegratedAngle(sampleUs, rateForIntegralDps);
     g_lastSampleMs = nowMs;

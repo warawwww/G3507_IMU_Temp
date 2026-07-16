@@ -5,6 +5,7 @@
 
 #include "KEY.h"
 #include "LED.h"
+#include "app_config.h"
 #include "bsp.h"
 #include "heater_task.h"
 #include "host_link.h"
@@ -32,6 +33,7 @@ static uint8_t g_lastReportedAppState;
 
 static void APP_UpdateHeaterStartup(void)
 {
+#if APP_ENABLE_HEATER
     if (!g_heaterStartPending) {
         return;
     }
@@ -40,6 +42,9 @@ static void APP_UpdateHeaterStartup(void)
     if (Heater_Task_IsEnabled()) {
         g_heaterStartPending = false;
     }
+#else
+    g_heaterStartPending = false;
+#endif
 }
 
 static void APP_HandleKeyEvents(void)
@@ -79,6 +84,7 @@ static void APP_UpdateCalibrationState(void)
 
 static void APP_UpdateHeaterState(void)
 {
+#if APP_ENABLE_HEATER
     if ((g_appState == APP_STATE_POWER_ON_HEATING) &&
         Heater_Task_IsStable()) {
         g_appState = APP_STATE_HEATER_STABLE;
@@ -86,6 +92,7 @@ static void APP_UpdateHeaterState(void)
         Heater_Task_IsEnabled() && !Heater_Task_IsStable()) {
         g_appState = APP_STATE_POWER_ON_HEATING;
     }
+#endif
 }
 
 static void APP_UpdateState(void)
@@ -98,8 +105,12 @@ static void APP_UpdateState(void)
 
 static uint32_t APP_GetRedLedPeriodMs(void)
 {
+#if APP_ENABLE_HEATER
     return Heater_Task_IsStable() ? APP_STABLE_LED_PERIOD_MS :
         APP_HEATING_LED_PERIOD_MS;
+#else
+    return APP_STABLE_LED_PERIOD_MS;
+#endif
 }
 
 static void APP_UpdateStatusLed(uint32_t nowMs)
@@ -142,14 +153,18 @@ void APP_Init(void)
     g_lastRedLedToggleMs = nowMs;
     g_lastAppStateReportMs = nowMs;
     g_lastReportedAppState = APP_STATE_REPORT_INVALID;
-    g_appState = APP_STATE_POWER_ON_HEATING;
-    g_heaterStartPending = true;
+    g_appState = APP_ENABLE_HEATER ?
+        APP_STATE_POWER_ON_HEATING : APP_STATE_HEATER_STABLE;
+    g_heaterStartPending = APP_ENABLE_HEATER ? true : false;
 
     KEY_Init();
     HostLink_Init();
     TMP_Task_Init();
     IMU_Task_Init();
     Heater_Task_Init();
+#if !APP_ENABLE_HEATER
+    Heater_Task_Disable();
+#endif
 }
 
 void APP_Run(void)
@@ -161,7 +176,9 @@ void APP_Run(void)
     TMP_Task_Run();
     IMU_Task_Run();
     APP_UpdateState();
+#if APP_ENABLE_HEATER
     Heater_Task_Run();
+#endif
 
     nowMs = BSP_GetTickMs();
     APP_ReportStateIfDue(nowMs);

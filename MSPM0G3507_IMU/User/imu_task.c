@@ -36,11 +36,14 @@
 #define IMU_TASK_STATIC_HOLD_EXIT_RATE_DPS (0.12f)
 #define IMU_TASK_STATIC_HOLD_EXIT_MEAN_ABS_DPS \
     (0.06f)
-#define IMU_TASK_STATIC_BIAS_ADAPT_DELAY_MS     (5000U)
-#define IMU_TASK_STATIC_BIAS_ADAPT_ALPHA        (0.005f)
-#define IMU_TASK_STATIC_BIAS_ADAPT_MAX_STEP_DPS (0.0005f)
+#define IMU_TASK_STATIC_BIAS_ADAPT_DELAY_MS     (3000U)
+#define IMU_TASK_STATIC_BIAS_ADAPT_ALPHA_MIN    (0.005f)
+#define IMU_TASK_STATIC_BIAS_ADAPT_ALPHA_MAX    (0.025f)
+#define IMU_TASK_STATIC_BIAS_ADAPT_RAMP_MS      (10000U)
+#define IMU_TASK_STATIC_BIAS_ADAPT_MAX_STEP_DPS (0.002f)
 #define IMU_TASK_STATIC_BIAS_ADAPT_MAX_TOTAL_DPS \
-    (0.02f)
+    (0.10f)
+#define IMU_TASK_ROTATION_CALIBRATION_LEGS (2U)
 #define IMU_TASK_MILLI_SCALE (1000.0f)
 #define IMU_TASK_PPM_SCALE   (1000000.0f)
 
@@ -67,7 +70,7 @@ typedef struct {
     float sumAbsRateDps;
     float maxAbsRateDps;
     uint32_t biasAdaptStartMs;
-    float biasAdaptBaseRaw24;
+    float biasAdaptBaseDeltaRaw24;
     bool holding;
     bool biasAdaptActive;
 } IMU_Task_StaticHold;
@@ -90,10 +93,15 @@ static uint32_t g_rotationStillStartMs;
 static uint16_t g_rotationTurns;
 static bool g_rotationClockwise;
 static bool g_rotationSeen;
+static uint8_t g_rotationLegIndex;
+static float g_rotationFirstAngleDeg;
+static float g_rotationRegressionNumerator;
+static float g_rotationRegressionDenominator;
 static bool g_zeroCalibrationCollecting;
 static bool g_reportPending;
 
-static float g_biasRaw24;
+static float g_baseBiasRaw24;
+static float g_adaptiveBiasDeltaRaw24;
 static float g_scaleCorrection;
 static float g_previousRateDps;
 static bool g_previousRateValid;
@@ -138,6 +146,22 @@ static float IMU_Task_Raw24ToDps(float rawAngularRate24)
     return rawAngularRate24 / XV7021_ANGULAR_RATE_24BIT_LSB_PER_DPS;
 }
 
+static float IMU_Task_GetEffectiveBiasRaw24(void)
+{
+    return g_baseBiasRaw24 + g_adaptiveBiasDeltaRaw24;
+}
+
+static void IMU_Task_ResetAdaptiveBias(void)
+{
+    g_adaptiveBiasDeltaRaw24 = 0.0f;
+}
+
+static void IMU_Task_SetBaseBiasRaw24(float biasRaw24)
+{
+    g_baseBiasRaw24 = biasRaw24;
+    IMU_Task_ResetAdaptiveBias();
+}
+
 static float IMU_Task_NormalizeAngleDeg(float angleDeg)
 {
     while (angleDeg >= 360.0f) {
@@ -168,7 +192,7 @@ static void IMU_Task_LoadStoredCalibration(void)
         return;
     }
 
-    g_biasRaw24       = storedCalibration.biasRaw24;
+    IMU_Task_SetBaseBiasRaw24(storedCalibration.biasRaw24);
     g_scaleCorrection = storedCalibration.scaleCorrection;
 }
 
@@ -176,7 +200,7 @@ static void IMU_Task_SaveStoredCalibration(uint32_t sampleCount)
 {
     IMU_CalStorage_Data calibration;
 
-    calibration.biasRaw24        = g_biasRaw24;
+    calibration.biasRaw24        = g_baseBiasRaw24;
     calibration.scaleCorrection  = g_scaleCorrection;
     calibration.biasTemperatureC = g_sample.temperatureC;
     calibration.sampleCount      = sampleCount;
@@ -206,9 +230,9 @@ static void IMU_Task_ResetStaticHoldWindow(uint32_t nowMs)
 
 static void IMU_Task_ResetStaticBiasAdapt(void)
 {
-    g_staticHold.biasAdaptStartMs   = 0U;
-    g_staticHold.biasAdaptBaseRaw24 = g_biasRaw24;
-    g_staticHold.biasAdaptActive    = false;
+    g_staticHold.biasAdaptStartMs      = 0U;
+    g_staticHold.biasAdaptBaseDeltaRaw24 = g_adaptiveBiasDeltaRaw24;
+    g_staticHold.biasAdaptActive       = false;
 }
 
 static void IMU_Task_PauseStaticBiasAdapt(void)
@@ -235,9 +259,67 @@ static float IMU_Task_RateDpsToBiasRaw24(float rateDps)
            scaleCorrection;
 }
 
-static void IMU_Task_UpdateStaticBiasAdapt(uint32_t nowMs,
-                                           float meanRateDps)
+static float IMU_Task_GetBiasAdaptConfidence(float value, float limit)
 {
+    if (limit <= 0.0f) {
+        return 0.0f;
+    }
+
+    return IMU_Task_ClampFloat(1.0f - (value / limit), 0.0f, 1.0f);
+}
+
+static float IMU_Task_GetStaticBiasAdaptAlpha(uint32_t nowMs,
+                                              float meanAbsRateDps,
+                                              float varianceDps2,
+                                              float maxAbsRateDps)
+{
+    uint32_t elapsedMs;
+    uint32_t rampMs;
+    float meanConfidence;
+    float varianceConfidence;
+    float maxConfidence;
+    float qualityConfidence;
+    float timeConfidence;
+    float confidence;
+
+    elapsedMs = (uint32_t)(nowMs - g_staticHold.biasAdaptStartMs);
+    if (elapsedMs <= IMU_TASK_STATIC_BIAS_ADAPT_DELAY_MS) {
+        return IMU_TASK_STATIC_BIAS_ADAPT_ALPHA_MIN;
+    }
+
+    rampMs = elapsedMs - IMU_TASK_STATIC_BIAS_ADAPT_DELAY_MS;
+    timeConfidence = IMU_Task_ClampFloat(
+        (float)rampMs / (float)IMU_TASK_STATIC_BIAS_ADAPT_RAMP_MS,
+        0.0f, 1.0f);
+
+    meanConfidence = IMU_Task_GetBiasAdaptConfidence(
+        meanAbsRateDps, IMU_TASK_STATIC_HOLD_ENTER_MEAN_ABS_DPS);
+    varianceConfidence = IMU_Task_GetBiasAdaptConfidence(
+        varianceDps2, IMU_TASK_STATIC_HOLD_ENTER_VARIANCE_DPS2);
+    maxConfidence = IMU_Task_GetBiasAdaptConfidence(
+        maxAbsRateDps, IMU_TASK_STATIC_HOLD_ENTER_MAX_ABS_DPS);
+
+    qualityConfidence = meanConfidence;
+    if (varianceConfidence < qualityConfidence) {
+        qualityConfidence = varianceConfidence;
+    }
+    if (maxConfidence < qualityConfidence) {
+        qualityConfidence = maxConfidence;
+    }
+
+    confidence = qualityConfidence * timeConfidence;
+    return IMU_TASK_STATIC_BIAS_ADAPT_ALPHA_MIN +
+           (IMU_TASK_STATIC_BIAS_ADAPT_ALPHA_MAX -
+            IMU_TASK_STATIC_BIAS_ADAPT_ALPHA_MIN) * confidence;
+}
+
+static void IMU_Task_UpdateStaticBiasAdapt(uint32_t nowMs,
+                                           float meanRateDps,
+                                           float meanAbsRateDps,
+                                           float varianceDps2,
+                                           float maxAbsRateDps)
+{
+    float alpha;
     float stepRaw24;
     float maxStepRaw24;
     float maxTotalRaw24;
@@ -253,8 +335,10 @@ static void IMU_Task_UpdateStaticBiasAdapt(uint32_t nowMs,
         return;
     }
 
+    alpha = IMU_Task_GetStaticBiasAdaptAlpha(
+        nowMs, meanAbsRateDps, varianceDps2, maxAbsRateDps);
     stepRaw24 = IMU_Task_RateDpsToBiasRaw24(meanRateDps) *
-                IMU_TASK_STATIC_BIAS_ADAPT_ALPHA;
+                alpha;
     maxStepRaw24 = IMU_Task_AbsFloat(IMU_Task_RateDpsToBiasRaw24(
         IMU_TASK_STATIC_BIAS_ADAPT_MAX_STEP_DPS));
     maxTotalRaw24 = IMU_Task_AbsFloat(IMU_Task_RateDpsToBiasRaw24(
@@ -262,12 +346,14 @@ static void IMU_Task_UpdateStaticBiasAdapt(uint32_t nowMs,
 
     stepRaw24 = IMU_Task_ClampFloat(stepRaw24, -maxStepRaw24,
                                     maxStepRaw24);
-    currentDeltaRaw24 = (g_biasRaw24 - g_staticHold.biasAdaptBaseRaw24) +
-                        stepRaw24;
+    currentDeltaRaw24 =
+        (g_adaptiveBiasDeltaRaw24 -
+         g_staticHold.biasAdaptBaseDeltaRaw24) + stepRaw24;
     currentDeltaRaw24 = IMU_Task_ClampFloat(
         currentDeltaRaw24, -maxTotalRaw24, maxTotalRaw24);
 
-    g_biasRaw24 = g_staticHold.biasAdaptBaseRaw24 + currentDeltaRaw24;
+    g_adaptiveBiasDeltaRaw24 =
+        g_staticHold.biasAdaptBaseDeltaRaw24 + currentDeltaRaw24;
 }
 
 static void IMU_Task_ResetStaticHold(uint32_t nowMs)
@@ -279,8 +365,8 @@ static void IMU_Task_ResetStaticHold(uint32_t nowMs)
 
 static void IMU_Task_EnterStaticHold(uint32_t nowMs)
 {
-    g_staticHold.holding            = true;
-    g_staticHold.biasAdaptBaseRaw24 = g_biasRaw24;
+    g_staticHold.holding               = true;
+    g_staticHold.biasAdaptBaseDeltaRaw24 = g_adaptiveBiasDeltaRaw24;
     IMU_Task_StartStaticBiasAdapt(nowMs);
 }
 
@@ -336,7 +422,9 @@ static float IMU_Task_ApplyStaticHold(uint32_t nowMs, float rateDps)
                 g_staticHold.holding = false;
                 IMU_Task_ResetStaticBiasAdapt();
             } else if (stableWindow) {
-                IMU_Task_UpdateStaticBiasAdapt(nowMs, meanRateDps);
+                IMU_Task_UpdateStaticBiasAdapt(
+                    nowMs, meanRateDps, meanAbsRateDps, varianceDps2,
+                    g_staticHold.maxAbsRateDps);
             } else {
                 IMU_Task_PauseStaticBiasAdapt();
             }
@@ -509,8 +597,9 @@ static void IMU_Task_FinishZeroCalibration(uint32_t nowMs)
         return;
     }
 
-    g_biasRaw24      = g_stats.meanRaw24;
-    g_sample.biasDps = IMU_Task_Raw24ToDps(g_biasRaw24);
+    IMU_Task_SetBaseBiasRaw24(g_stats.meanRaw24);
+    g_sample.biasDps =
+        IMU_Task_Raw24ToDps(IMU_Task_GetEffectiveBiasRaw24());
     IMU_Task_SaveStoredCalibration(g_stats.count);
     IMU_Task_ResetIntegration(nowMs);
     g_state        = IMU_TASK_STATE_READY;
@@ -540,10 +629,8 @@ static void IMU_Task_ProcessZeroCalibration(
     }
 }
 
-static void IMU_Task_StartRotationCalibrationAt(
-    uint32_t nowMs, uint16_t turns, bool clockwise)
+static void IMU_Task_StartRotationLeg(uint32_t nowMs, bool clockwise)
 {
-    g_rotationTurns             = turns;
     g_rotationClockwise         = clockwise;
     g_rotationSeen              = false;
     g_rotationSaturated         = false;
@@ -554,12 +641,23 @@ static void IMU_Task_StartRotationCalibrationAt(
     g_rotationStillStartMs      = nowMs;
     g_calibrationStartMs        = nowMs;
     g_phaseStartMs              = nowMs;
-    IMU_Task_ResetStaticHold(nowMs);
-    g_rotationPhase = IMU_TASK_ROTATION_PHASE_PRE_STATIC;
-    g_state         = IMU_TASK_STATE_ROTATION_CALIBRATING;
-    g_sample.state  = g_state;
+    g_rotationPhase             = IMU_TASK_ROTATION_PHASE_PRE_STATIC;
     IMU_Task_ResetStats();
     IMU_Task_SetCalibrationResult(IMU_TASK_CAL_RESULT_BUSY);
+}
+
+static void IMU_Task_StartRotationCalibrationAt(
+    uint32_t nowMs, uint16_t turns, bool clockwise)
+{
+    g_rotationTurns                 = turns;
+    g_rotationLegIndex              = 0U;
+    g_rotationFirstAngleDeg         = 0.0f;
+    g_rotationRegressionNumerator   = 0.0f;
+    g_rotationRegressionDenominator = 0.0f;
+    IMU_Task_ResetStaticHold(nowMs);
+    g_state         = IMU_TASK_STATE_ROTATION_CALIBRATING;
+    g_sample.state  = g_state;
+    IMU_Task_StartRotationLeg(nowMs, clockwise);
 }
 
 static void IMU_Task_FailRotationCalibration(
@@ -587,8 +685,9 @@ static void IMU_Task_ProcessRotationPreStatic(
         return;
     }
 
-    g_biasRaw24                 = g_stats.meanRaw24;
-    g_sample.biasDps            = IMU_Task_Raw24ToDps(g_biasRaw24);
+    IMU_Task_SetBaseBiasRaw24(g_stats.meanRaw24);
+    g_sample.biasDps =
+        IMU_Task_Raw24ToDps(IMU_Task_GetEffectiveBiasRaw24());
     g_rotationAngleDeg          = 0.0f;
     g_rotationPreviousRateDps   = 0.0f;
     g_rotationPreviousRateValid = false;
@@ -601,12 +700,15 @@ static void IMU_Task_ProcessRotationPreStatic(
 
 static void IMU_Task_FinishRotationCalibration(uint32_t nowMs)
 {
-    float measuredAngleDeg = IMU_Task_AbsFloat(g_rotationAngleDeg);
-    float targetAngleDeg   = 360.0f * (float)g_rotationTurns;
+    float measuredAngleDeg = g_rotationAngleDeg;
+    float measuredAbsAngleDeg = IMU_Task_AbsFloat(measuredAngleDeg);
+    float targetAbsAngleDeg = 360.0f * (float)g_rotationTurns;
+    float targetSignedAngleDeg;
     float scaleCorrection;
 
-    if (g_rotationSaturated || (measuredAngleDeg <
-                                (targetAngleDeg * IMU_TASK_ROTATION_MIN_TARGET_RATIO))) {
+    if (g_rotationSaturated || (measuredAbsAngleDeg <
+                                (targetAbsAngleDeg *
+                                 IMU_TASK_ROTATION_MIN_TARGET_RATIO))) {
         IMU_Task_FailRotationCalibration(
             IMU_TASK_CAL_RESULT_SCALE_OUT_OF_RANGE);
         return;
@@ -618,7 +720,37 @@ static void IMU_Task_FinishRotationCalibration(uint32_t nowMs)
         return;
     }
 
-    scaleCorrection = targetAngleDeg / measuredAngleDeg;
+    if (g_rotationLegIndex == 0U) {
+        g_rotationFirstAngleDeg = measuredAngleDeg;
+    } else if ((measuredAngleDeg * g_rotationFirstAngleDeg) >= 0.0f) {
+        IMU_Task_FailRotationCalibration(
+            IMU_TASK_CAL_RESULT_SCALE_OUT_OF_RANGE);
+        return;
+    }
+
+    targetSignedAngleDeg =
+        (measuredAngleDeg >= 0.0f) ? targetAbsAngleDeg :
+                                     -targetAbsAngleDeg;
+    g_rotationRegressionNumerator +=
+        targetSignedAngleDeg * measuredAngleDeg;
+    g_rotationRegressionDenominator +=
+        measuredAngleDeg * measuredAngleDeg;
+
+    if ((uint8_t)(g_rotationLegIndex + 1U) <
+        IMU_TASK_ROTATION_CALIBRATION_LEGS) {
+        g_rotationLegIndex++;
+        IMU_Task_StartRotationLeg(nowMs, !g_rotationClockwise);
+        return;
+    }
+
+    if (g_rotationRegressionDenominator <= 0.0f) {
+        IMU_Task_FailRotationCalibration(
+            IMU_TASK_CAL_RESULT_SCALE_OUT_OF_RANGE);
+        return;
+    }
+
+    scaleCorrection = g_rotationRegressionNumerator /
+                      g_rotationRegressionDenominator;
     if ((scaleCorrection < IMU_TASK_SCALE_CORRECTION_MIN) ||
         (scaleCorrection > IMU_TASK_SCALE_CORRECTION_MAX)) {
         IMU_Task_FailRotationCalibration(
@@ -626,7 +758,6 @@ static void IMU_Task_FinishRotationCalibration(uint32_t nowMs)
         return;
     }
 
-    (void)g_rotationClockwise;
     g_scaleCorrection        = scaleCorrection;
     g_sample.scaleCorrection = g_scaleCorrection;
     IMU_Task_SaveStoredCalibration(g_stats.count);
@@ -641,7 +772,7 @@ static void IMU_Task_ProcessRotation(uint32_t nowMs, uint32_t nowUs,
                                      int32_t rawAngularRate24, float rawDps)
 {
     float rateDps = IMU_Task_Raw24ToDps(
-        (float)rawAngularRate24 - g_biasRaw24);
+        (float)rawAngularRate24 - IMU_Task_GetEffectiveBiasRaw24());
 
     if ((uint32_t)(nowMs - g_calibrationStartMs) >=
         IMU_TASK_ROTATION_TIMEOUT_MS) {
@@ -762,7 +893,8 @@ static void IMU_Task_ReadSample(uint32_t nowMs)
 
     rawDps           = IMU_Task_Raw24ToDps((float)rawAngularRate24);
     correctedRateDps = IMU_Task_Raw24ToDps(
-                           (float)rawAngularRate24 - g_biasRaw24) *
+                           (float)rawAngularRate24 -
+                           IMU_Task_GetEffectiveBiasRaw24()) *
                        g_scaleCorrection;
     rateForIntegralDps = correctedRateDps;
 #if APP_ENABLE_IMU_STATIC_HOLD
@@ -781,7 +913,8 @@ static void IMU_Task_ReadSample(uint32_t nowMs)
     g_sample.sampleCount++;
     g_sample.rawAngularRate24 = rawAngularRate24;
     g_sample.angularRateDps   = rateForIntegralDps;
-    g_sample.biasDps          = IMU_Task_Raw24ToDps(g_biasRaw24);
+    g_sample.biasDps =
+        IMU_Task_Raw24ToDps(IMU_Task_GetEffectiveBiasRaw24());
     g_sample.scaleCorrection  = g_scaleCorrection;
     g_sample.state            = g_state;
 
@@ -852,12 +985,17 @@ void IMU_Task_Init(void)
     g_lastInitAttemptMs = nowMs;
     g_lastTemperatureMs = nowMs;
     g_lastReportMs      = nowMs;
-    g_biasRaw24         = 0.0f;
+    g_baseBiasRaw24     = 0.0f;
+    g_adaptiveBiasDeltaRaw24 = 0.0f;
     g_scaleCorrection   = 1.0f;
     IMU_Task_LoadStoredCalibration();
     g_previousRateDps           = 0.0f;
     g_previousRateValid         = false;
     g_rotationPhase             = IMU_TASK_ROTATION_PHASE_IDLE;
+    g_rotationLegIndex          = 0U;
+    g_rotationFirstAngleDeg     = 0.0f;
+    g_rotationRegressionNumerator = 0.0f;
+    g_rotationRegressionDenominator = 0.0f;
     g_zeroCalibrationCollecting = false;
     g_reportPending             = true;
     g_sample.timeMs             = nowMs;
@@ -867,7 +1005,8 @@ void IMU_Task_Init(void)
     g_sample.angularRateDps     = 0.0f;
     g_sample.angleDeg           = 0.0f;
     g_sample.normalizedAngleDeg = 0.0f;
-    g_sample.biasDps            = IMU_Task_Raw24ToDps(g_biasRaw24);
+    g_sample.biasDps =
+        IMU_Task_Raw24ToDps(IMU_Task_GetEffectiveBiasRaw24());
     g_sample.scaleCorrection    = g_scaleCorrection;
     g_sample.temperatureC       = 0.0f;
     g_sample.state              = g_state;
@@ -965,6 +1104,9 @@ bool IMU_Task_RunHardwareZeroCalibration(void)
         return false;
     }
 
+    IMU_Task_ResetAdaptiveBias();
+    g_sample.biasDps =
+        IMU_Task_Raw24ToDps(IMU_Task_GetEffectiveBiasRaw24());
     IMU_Task_ResetIntegration(BSP_GetTickMs());
     return true;
 }

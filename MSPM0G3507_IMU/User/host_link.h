@@ -32,7 +32,7 @@
  *   PING                keep reporting alive before timeout
  *   IMU_ZERO / ZERO       request the same zero-drift calibration as short key
  *   IMU_AUTOC / AUTOC     request XV7021BB internal AutoC zero-rate command
- *   IMU_CAL1080 / CAL1080 request the same 1080 degree calibration as long key
+ *   IMU_CAL1080 / CAL1080 request bidirectional 1080 degree calibration
  *   IMU_CAL360 / CAL360   legacy alias for IMU_CAL1080
  *   IMU_ANGLE_ZERO / ANGLE_ZERO reset integrated IMU angle to 0
  */

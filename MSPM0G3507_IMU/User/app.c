@@ -7,6 +7,7 @@
 #include "LED.h"
 #include "app_config.h"
 #include "bsp.h"
+#include "external_imu_link.h"
 #include "heater_task.h"
 #include "host_link.h"
 #include "imu_task.h"
@@ -67,12 +68,30 @@ static void APP_UpdateHeaterStartup(void)
 
 static void APP_HandleKeyEvents(void)
 {
+#if APP_ENABLE_EXTERNAL_IMU_LINK
+    bool externalRotationRequested =
+        ExternalIMULink_TakeRotationCalibrationRequest();
+    bool externalZeroRequested =
+        ExternalIMULink_TakeZeroCalibrationRequest();
+    bool externalAutoCRequested = ExternalIMULink_TakeAutoCRequest();
+    bool externalAngleResetRequested =
+        ExternalIMULink_TakeAngleResetRequest();
+#else
+    bool externalRotationRequested   = false;
+    bool externalZeroRequested       = false;
+    bool externalAutoCRequested      = false;
+    bool externalAngleResetRequested = false;
+#endif
     bool rotationRequested = KEY_WasLongPressed() ||
-                             HostLink_TakeRotationCalibrationRequest();
+                             HostLink_TakeRotationCalibrationRequest() ||
+                             externalRotationRequested;
     bool zeroRequested = KEY_WasShortPressed() ||
-                         HostLink_TakeZeroCalibrationRequest();
-    bool autoCRequested = HostLink_TakeAutoCRequest();
-    bool angleResetRequested = HostLink_TakeAngleResetRequest();
+                         HostLink_TakeZeroCalibrationRequest() ||
+                         externalZeroRequested;
+    bool autoCRequested =
+        HostLink_TakeAutoCRequest() || externalAutoCRequested;
+    bool angleResetRequested =
+        HostLink_TakeAngleResetRequest() || externalAngleResetRequested;
 
     if (rotationRequested) {
         if (IMU_Task_StartRotationCalibration(
@@ -289,6 +308,9 @@ void APP_Init(void)
 
     KEY_Init();
     HostLink_Init();
+#if APP_ENABLE_EXTERNAL_IMU_LINK
+    ExternalIMULink_Init();
+#endif
     TMP_Task_Init();
     IMU_Task_Init();
     Heater_Task_Init();
@@ -303,6 +325,9 @@ void APP_Run(void)
 
     KEY_Update();
     HostLink_Run();
+#if APP_ENABLE_EXTERNAL_IMU_LINK
+    ExternalIMULink_Run((uint8_t)g_appState);
+#endif
     TMP_Task_Run();
     IMU_Task_Run();
     APP_UpdateState();

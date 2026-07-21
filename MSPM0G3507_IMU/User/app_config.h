@@ -20,6 +20,15 @@
  */
 #define APP_ENABLE_IMU_AUTOC (1)
 
+/*
+ * External MCU UART link. This is separate from the Type-C/HTML HostLink.
+ * Native link uses lightweight 100 Hz status/data frames by default.
+ * JY901 stream is output-only and uses the common 10 Hz WIT/JY901 return rate.
+ */
+#define APP_ENABLE_EXTERNAL_IMU_LINK         (1)
+#define APP_EXTERNAL_IMU_ENABLE_NATIVE_LINK  (1)
+#define APP_EXTERNAL_IMU_ENABLE_JY901_STREAM (0)
+
 #if (APP_ENABLE_IMU_STATIC_HOLD != 0) && (APP_ENABLE_IMU_STATIC_HOLD != 1)
 #error "APP_ENABLE_IMU_STATIC_HOLD must be 0 or 1"
 #endif
@@ -30,6 +39,26 @@
 
 #if (APP_ENABLE_IMU_AUTOC != 0) && (APP_ENABLE_IMU_AUTOC != 1)
 #error "APP_ENABLE_IMU_AUTOC must be 0 or 1"
+#endif
+
+#if (APP_ENABLE_EXTERNAL_IMU_LINK != 0) && (APP_ENABLE_EXTERNAL_IMU_LINK != 1)
+#error "APP_ENABLE_EXTERNAL_IMU_LINK must be 0 or 1"
+#endif
+
+#if (APP_EXTERNAL_IMU_ENABLE_NATIVE_LINK != 0) && \
+    (APP_EXTERNAL_IMU_ENABLE_NATIVE_LINK != 1)
+#error "APP_EXTERNAL_IMU_ENABLE_NATIVE_LINK must be 0 or 1"
+#endif
+
+#if (APP_EXTERNAL_IMU_ENABLE_JY901_STREAM != 0) && \
+    (APP_EXTERNAL_IMU_ENABLE_JY901_STREAM != 1)
+#error "APP_EXTERNAL_IMU_ENABLE_JY901_STREAM must be 0 or 1"
+#endif
+
+#if (APP_ENABLE_EXTERNAL_IMU_LINK != 0) && \
+    (APP_EXTERNAL_IMU_ENABLE_NATIVE_LINK == 0) && \
+    (APP_EXTERNAL_IMU_ENABLE_JY901_STREAM == 0)
+#error "At least one external IMU UART protocol must be enabled"
 #endif
 
 #endif

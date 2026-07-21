@@ -189,7 +189,7 @@ UART1.DMA_CHANNEL_TX.peripheral.$assign = "DMA_CH0";
 
 UART2.$name                             = "UART_EXTERNAL";
 UART2.enableFIFO                        = true;
-UART2.targetBaudRate                    = 115200;
+UART2.targetBaudRate                    = 460800;
 UART2.enabledInterrupts                 = ["DMA_DONE_RX","DMA_DONE_TX"];
 UART2.enabledDMARXTriggers              = "DL_UART_DMA_INTERRUPT_RX";
 UART2.enabledDMATXTriggers              = "DL_UART_DMA_INTERRUPT_TX";

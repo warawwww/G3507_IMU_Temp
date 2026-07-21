@@ -44,7 +44,7 @@ nativeView.setInt32(12, -90000, true);
 nativePayload[16] = 1;
 nativePayload[17] = 3;
 nativePayload[18] = 2;
-nativePayload[19] = 3;
+nativePayload[19] = 7;
 
 const nativeFrame = protocol.encodeNativeFrame(
   protocol.frameTypes.DATA,
@@ -67,7 +67,7 @@ assert.strictEqual(parsedNative.normalizedAngleDeg, -90);
 assert.strictEqual(parsedNative.imuState, 1);
 assert.strictEqual(parsedNative.appState, 3);
 assert.strictEqual(parsedNative.calResult, 2);
-assert.strictEqual(parsedNative.flags, 3);
+assert.strictEqual(parsedNative.flags, 7);
 
 const jy901Angle = new Uint8Array(11);
 jy901Angle[0] = 0x55;

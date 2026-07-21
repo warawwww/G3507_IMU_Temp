@@ -12,9 +12,6 @@
 #define EXTERNAL_IMU_LINK_NATIVE_PERIOD_MS (10U)
 #define EXTERNAL_IMU_LINK_JY901_PERIOD_MS  (100U)
 
-#define EXTERNAL_IMU_LINK_FLAG_STATIC_BIAS_LEARNING (0x01U)
-#define EXTERNAL_IMU_LINK_FLAG_RX_OVERFLOW          (0x02U)
-
 static ExternalIMUProtocol_Parser g_parser;
 static bool g_zeroCalibrationRequested;
 static bool g_autoCRequested;
@@ -108,6 +105,12 @@ static bool ExternalIMULink_IsPayloadEmpty(
     return frame->payloadLength == 0U;
 }
 
+static bool ExternalIMULink_IsAngleValid(const IMU_Task_Sample *sample)
+{
+    return (sample != NULL) && (sample->state == IMU_TASK_STATE_READY) &&
+           (IMU_Task_GetCalibrationResult() == IMU_TASK_CAL_RESULT_OK);
+}
+
 static void ExternalIMULink_HandleCommand(
     const ExternalIMUProtocol_Frame *frame)
 {
@@ -181,7 +184,6 @@ static void ExternalIMULink_HandleCommand(
 
 static void ExternalIMULink_ProcessRx(void)
 {
-#if APP_EXTERNAL_IMU_ENABLE_NATIVE_LINK
     uint8_t byte;
     ExternalIMUProtocol_Frame frame;
 
@@ -190,26 +192,29 @@ static void ExternalIMULink_ProcessRx(void)
             ExternalIMULink_HandleCommand(&frame);
         }
     }
-#else
-    BSP_UART_FlushRx(BSP_UART_PORT_EXTERNAL);
-#endif
 }
 
-static uint8_t ExternalIMULink_GetFlags(void)
+#if APP_EXTERNAL_IMU_ENABLE_NATIVE_LINK
+static uint8_t ExternalIMULink_GetFlags(bool angleValid)
 {
     uint8_t flags = 0U;
 
     if (IMU_Task_IsStaticBiasLearning()) {
-        flags |= EXTERNAL_IMU_LINK_FLAG_STATIC_BIAS_LEARNING;
+        flags |= EXTERNAL_IMU_DATA_FLAG_STATIC_BIAS_LEARNING;
     }
 
     if (BSP_UART_RxOverflowed(BSP_UART_PORT_EXTERNAL)) {
-        flags |= EXTERNAL_IMU_LINK_FLAG_RX_OVERFLOW;
+        flags |= EXTERNAL_IMU_DATA_FLAG_RX_OVERFLOW;
         BSP_UART_ClearRxOverflow(BSP_UART_PORT_EXTERNAL);
+    }
+
+    if (angleValid) {
+        flags |= EXTERNAL_IMU_DATA_FLAG_ANGLE_VALID;
     }
 
     return flags;
 }
+#endif
 
 static void ExternalIMULink_SendNativeDataIfDue(
     uint32_t nowMs, uint8_t appState)
@@ -219,6 +224,7 @@ static void ExternalIMULink_SendNativeDataIfDue(
     ExternalIMUProtocol_NativeDataPayload payload;
     uint8_t frame[EXTERNAL_IMU_PROTOCOL_NATIVE_MAX_FRAME_SIZE];
     size_t frameLength;
+    bool angleValid;
 
     if ((uint32_t)(nowMs - g_lastNativeTxMs) <
         EXTERNAL_IMU_LINK_NATIVE_PERIOD_MS) {
@@ -229,17 +235,25 @@ static void ExternalIMULink_SendNativeDataIfDue(
         return;
     }
 
+    angleValid = ExternalIMULink_IsAngleValid(&sample);
     payload.timeMs = sample.timeMs;
-    payload.angularRateMilliDps =
-        ExternalIMULink_RoundScaled(sample.angularRateDps, 1000.0f);
-    payload.angleMilliDeg =
-        ExternalIMULink_RoundScaled(sample.angleDeg, 1000.0f);
-    payload.normalizedAngleMilliDeg =
-        ExternalIMULink_RoundScaled(sample.normalizedAngleDeg, 1000.0f);
+    if (angleValid) {
+        payload.angularRateMilliDps =
+            ExternalIMULink_RoundScaled(sample.angularRateDps, 1000.0f);
+        payload.angleMilliDeg =
+            ExternalIMULink_RoundScaled(sample.angleDeg, 1000.0f);
+        payload.normalizedAngleMilliDeg =
+            ExternalIMUProtocol_NormalizeAngleMilliDeg180(
+                payload.angleMilliDeg);
+    } else {
+        payload.angularRateMilliDps     = 0;
+        payload.angleMilliDeg           = 0;
+        payload.normalizedAngleMilliDeg = 0;
+    }
     payload.imuState  = (uint8_t)sample.state;
     payload.appState  = appState;
     payload.calResult = (uint8_t)IMU_Task_GetCalibrationResult();
-    payload.flags     = ExternalIMULink_GetFlags();
+    payload.flags     = ExternalIMULink_GetFlags(angleValid);
 
     frameLength = ExternalIMUProtocol_EncodeNativeIMUData(
         &payload, frame, sizeof(frame));
@@ -260,6 +274,7 @@ static void ExternalIMULink_SendJY901DataIfDue(uint32_t nowMs)
     uint8_t frame[EXTERNAL_IMU_PROTOCOL_JY901_FRAME_SIZE * 2U];
     int32_t angularRateMilliDps;
     int32_t normalizedAngleMilliDeg;
+    int32_t angleMilliDeg;
     size_t firstLength;
     size_t secondLength;
 
@@ -271,11 +286,16 @@ static void ExternalIMULink_SendJY901DataIfDue(uint32_t nowMs)
     if (!IMU_Task_GetSample(&sample)) {
         return;
     }
+    if (!ExternalIMULink_IsAngleValid(&sample)) {
+        return;
+    }
 
     angularRateMilliDps =
         ExternalIMULink_RoundScaled(sample.angularRateDps, 1000.0f);
+    angleMilliDeg =
+        ExternalIMULink_RoundScaled(sample.angleDeg, 1000.0f);
     normalizedAngleMilliDeg =
-        ExternalIMULink_RoundScaled(sample.normalizedAngleDeg, 1000.0f);
+        ExternalIMUProtocol_NormalizeAngleMilliDeg180(angleMilliDeg);
 
     firstLength = ExternalIMUProtocol_EncodeJY901GyroFrame(
         angularRateMilliDps, frame, sizeof(frame));

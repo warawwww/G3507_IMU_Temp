@@ -91,6 +91,20 @@ uint16_t ExternalIMUProtocol_Crc16Ccitt(
     return crc;
 }
 
+int32_t ExternalIMUProtocol_NormalizeAngleMilliDeg180(
+    int32_t angleMilliDeg)
+{
+    int32_t normalized = angleMilliDeg % 360000;
+
+    if (normalized >= 180000) {
+        normalized -= 360000;
+    } else if (normalized < -180000) {
+        normalized += 360000;
+    }
+
+    return normalized;
+}
+
 void ExternalIMUProtocol_InitParser(ExternalIMUProtocol_Parser *parser)
 {
     if (parser == NULL) {
@@ -293,8 +307,10 @@ size_t ExternalIMUProtocol_EncodeJY901GyroFrame(
 size_t ExternalIMUProtocol_EncodeJY901AngleFrame(
     int32_t yawMilliDeg, uint8_t *out, size_t outSize)
 {
+    int32_t normalizedYawMilliDeg =
+        ExternalIMUProtocol_NormalizeAngleMilliDeg180(yawMilliDeg);
     int32_t raw = ExternalIMUProtocol_DivideRoundNearest(
-        (int64_t)yawMilliDeg * 32768LL, 180000);
+        (int64_t)normalizedYawMilliDeg * 32768LL, 180000);
 
     if ((out == NULL) || (outSize < EXTERNAL_IMU_PROTOCOL_JY901_FRAME_SIZE)) {
         return 0U;

@@ -42,6 +42,12 @@ typedef enum {
 } ExternalIMUProtocol_DataId;
 
 typedef enum {
+    EXTERNAL_IMU_DATA_FLAG_STATIC_BIAS_LEARNING = 0x01U,
+    EXTERNAL_IMU_DATA_FLAG_RX_OVERFLOW          = 0x02U,
+    EXTERNAL_IMU_DATA_FLAG_ANGLE_VALID          = 0x04U,
+} ExternalIMUProtocol_DataFlag;
+
+typedef enum {
     EXTERNAL_IMU_PARSE_SYNC_0 = 0,
     EXTERNAL_IMU_PARSE_SYNC_1,
     EXTERNAL_IMU_PARSE_LEN,
@@ -77,6 +83,8 @@ typedef struct {
 } ExternalIMUProtocol_NativeDataPayload;
 
 uint16_t ExternalIMUProtocol_Crc16Ccitt(const uint8_t *data, size_t length);
+int32_t ExternalIMUProtocol_NormalizeAngleMilliDeg180(
+    int32_t angleMilliDeg);
 
 void ExternalIMUProtocol_InitParser(ExternalIMUProtocol_Parser *parser);
 bool ExternalIMUProtocol_ParseNativeByte(ExternalIMUProtocol_Parser *parser,

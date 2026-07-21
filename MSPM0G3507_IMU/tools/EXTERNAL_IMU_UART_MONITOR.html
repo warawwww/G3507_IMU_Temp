@@ -905,6 +905,7 @@
       const active = [];
       if ((flags & 0x01) !== 0) active.push('静止自学习');
       if ((flags & 0x02) !== 0) active.push('RX 溢出');
+      if ((flags & 0x04) !== 0) active.push('角度有效');
       if (active.length === 0) return '无 (0x00)';
       return `${active.join('，')} (0x${flags.toString(16).padStart(2, '0')})`;
     }
@@ -932,7 +933,11 @@
       calResultElement.textContent = labelFor(CAL_RESULTS, frame.calResult);
       flagsElement.textContent = formatFlags(frame.flags);
       updateAngleVisualization(frame.normalizedAngleDeg);
-      setStatus('正在接收 Native 数据', 'online');
+      if ((frame.flags & 0x04) === 0) {
+        setStatus('正在接收 Native 状态，角度未有效', 'online');
+      } else {
+        setStatus('正在接收 Native 数据', 'online');
+      }
     }
 
     function updateJY901Data(frame) {

@@ -48,7 +48,7 @@ static void test_native_data_frame_is_lightweight(void)
         .imuState                = 1U,
         .appState                = 3U,
         .calResult               = 2U,
-        .flags                   = 0x03U,
+        .flags                   = EXTERNAL_IMU_DATA_FLAG_ANGLE_VALID,
     };
     size_t length;
 
@@ -65,7 +65,17 @@ static void test_native_data_frame_is_lightweight(void)
     assert(bytes[21] == payload.imuState);
     assert(bytes[22] == payload.appState);
     assert(bytes[23] == payload.calResult);
-    assert(bytes[24] == payload.flags);
+    assert(bytes[24] == EXTERNAL_IMU_DATA_FLAG_ANGLE_VALID);
+}
+
+static void test_angle_normalization_is_signed_180(void)
+{
+    assert(ExternalIMUProtocol_NormalizeAngleMilliDeg180(0) == 0);
+    assert(ExternalIMUProtocol_NormalizeAngleMilliDeg180(179999) == 179999);
+    assert(ExternalIMUProtocol_NormalizeAngleMilliDeg180(180000) == -180000);
+    assert(ExternalIMUProtocol_NormalizeAngleMilliDeg180(270000) == -90000);
+    assert(ExternalIMUProtocol_NormalizeAngleMilliDeg180(-181000) == 179000);
+    assert(EXTERNAL_IMU_DATA_FLAG_ANGLE_VALID == 0x04U);
 }
 
 static void test_jy901_angle_frame(void)
@@ -89,12 +99,27 @@ static void test_jy901_angle_frame(void)
     assert(frame[10] == sum);
 }
 
+static void test_jy901_angle_frame_normalizes_large_positive_to_negative(void)
+{
+    uint8_t frame[EXTERNAL_IMU_PROTOCOL_JY901_FRAME_SIZE];
+    int16_t yawRaw;
+
+    assert(ExternalIMUProtocol_EncodeJY901AngleFrame(
+               270000, frame, sizeof(frame)) ==
+           EXTERNAL_IMU_PROTOCOL_JY901_FRAME_SIZE);
+
+    yawRaw = (int16_t)((uint16_t)frame[6] | ((uint16_t)frame[7] << 8));
+    assert(yawRaw == -16384);
+}
+
 int main(void)
 {
     test_crc16_ccitt_reference();
     test_native_command_round_trip();
     test_native_data_frame_is_lightweight();
+    test_angle_normalization_is_signed_180();
     test_jy901_angle_frame();
+    test_jy901_angle_frame_normalizes_large_positive_to_negative();
 
     return 0;
 }

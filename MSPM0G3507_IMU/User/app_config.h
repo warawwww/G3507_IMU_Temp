@@ -18,7 +18,7 @@
  * and before the software zero-drift calibration starts.
  * Set to 0 to use only the software zero-drift calibration.
  */
-#define APP_ENABLE_IMU_AUTOC (0)
+#define APP_ENABLE_IMU_AUTOC (1)
 
 #if (APP_ENABLE_IMU_STATIC_HOLD != 0) && (APP_ENABLE_IMU_STATIC_HOLD != 1)
 #error "APP_ENABLE_IMU_STATIC_HOLD must be 0 or 1"

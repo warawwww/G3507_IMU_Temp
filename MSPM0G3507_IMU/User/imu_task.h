@@ -52,5 +52,6 @@ bool IMU_Task_RunHardwareZeroCalibration(void);
 bool IMU_Task_StartRotationCalibration(uint16_t turns, bool clockwise);
 bool IMU_Task_ResetAngle(void);
 bool IMU_Task_IsCalibrationBusy(void);
+bool IMU_Task_IsStaticBiasLearning(void);
 
 #endif

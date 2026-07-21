@@ -23,6 +23,35 @@
             "problemMatcher": []
         },
         {
+            "label": "flash fast no verify",
+            "type": "shell",
+            "command": "D:/diansai/ti/openocd/bin/openocd.exe",
+            "args": [
+                "-s",
+                "D:/diansai/ti/openocd/share/openocd/scripts",
+                "-f",
+                "interface/xds110.cfg",
+                "-f",
+                "target/ti_mspm0.cfg",
+                "-c",
+                "adapter speed 2500",
+                "-c",
+                "program \"${workspaceFolder}/build/Debug/MSPM0G3507_IMU.elf\" reset exit"
+            ],
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "label": "build and flash fast no verify",
+            "dependsOrder": "sequence",
+            "dependsOn": [
+                "build",
+                "flash fast no verify"
+            ],
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
             "label": "rebuild",
             "type": "shell",
             "command": "${command:eide.project.rebuild}",

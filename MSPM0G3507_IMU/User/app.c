@@ -14,6 +14,7 @@
 
 #define APP_HEATING_LED_PERIOD_MS       (200U)
 #define APP_ZERO_CAL_LED_PERIOD_MS      (200U)
+#define APP_STATIC_BIAS_LED_PERIOD_MS   (500U)
 #define APP_STABLE_LED_PERIOD_MS        (1000U)
 #define APP_STATE_REPORT_PERIOD_MS      (500U)
 #define APP_STATE_REPORT_INVALID        (0xFFU)
@@ -187,6 +188,11 @@ static bool APP_GetGreenStatusLedPeriodMs(uint32_t *periodMs)
     }
 
     if (g_appState == APP_STATE_GYRO_STABLE_TX) {
+        if (IMU_Task_IsStaticBiasLearning()) {
+            *periodMs = APP_STATIC_BIAS_LED_PERIOD_MS;
+            return true;
+        }
+
         *periodMs = APP_STABLE_LED_PERIOD_MS;
         return true;
     }

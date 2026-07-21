@@ -12,7 +12,7 @@
 #define IMU_TASK_TEMPERATURE_PERIOD_MS      (50U)
 #define IMU_TASK_REPORT_PERIOD_MS           (10U)
 #define IMU_TASK_ZERO_CAL_SETTLE_MS         (1000U)
-#define IMU_TASK_DEFAULT_ZERO_CAL_MS        (10000U)
+#define IMU_TASK_DEFAULT_ZERO_CAL_MS        (3000U)
 #define IMU_TASK_MIN_ZERO_CAL_MS            (500U)
 #define IMU_TASK_MAX_ZERO_CAL_MS            (30000U)
 #define IMU_TASK_STATIC_MIN_SAMPLES         (64U)
@@ -1149,4 +1149,18 @@ bool IMU_Task_IsCalibrationBusy(void)
 {
     return (g_state == IMU_TASK_STATE_ZERO_CALIBRATING) ||
            (g_state == IMU_TASK_STATE_ROTATION_CALIBRATING);
+}
+
+bool IMU_Task_IsStaticBiasLearning(void)
+{
+#if APP_ENABLE_IMU_STATIC_HOLD
+    uint32_t nowMs = BSP_GetTickMs();
+
+    return (g_state == IMU_TASK_STATE_READY) &&
+           g_staticHold.holding && g_staticHold.biasAdaptActive &&
+           ((uint32_t)(nowMs - g_staticHold.biasAdaptStartMs) >=
+            IMU_TASK_STATIC_BIAS_ADAPT_DELAY_MS);
+#else
+    return false;
+#endif
 }
